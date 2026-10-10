@@ -11,7 +11,7 @@ Local checkouts, used in every setup and test step below:
 
 ## Recommendation
 
-Build a Tauri 2 macOS tray app. Rust owns polling, the keychain, and grouping. Vue 3 renders one popover. Ship a fine-grained read-only personal access token in the macOS Keychain. Poll with one GitHub GraphQL search per org. The interval is a setting in the config file and in the popover, default 30 seconds, allowed range 15 seconds to 15 minutes. Read CI from `statusCheckRollup`. Pause and resume from the tray menu or the popover, including "for 1 hour" and "until tomorrow". The icon shows a paused state while polling is stopped. Keep the bot filter configurable, defaulting to a collapsed Dependabot row that still surfaces failing bot PRs.
+Build a Tauri 2 macOS tray app. Rust owns polling, the keychain, and grouping. Vue 3 renders one popover. The first phases ship a fine-grained read-only personal access token in the macOS Keychain. A later phase adds issue and pull-request write so a row can change labels and post a comment. Poll with one GitHub GraphQL search per org. The interval is a setting in the config file and in the popover, default 30 seconds, allowed range 15 seconds to 15 minutes. Read CI from `statusCheckRollup`. Pause and resume from the tray menu or the popover, including "for 1 hour" and "until tomorrow". The icon shows a paused state while polling is stopped. Keep the bot filter configurable, defaulting to a collapsed Dependabot row that still surfaces failing bot PRs.
 
 ## Snapshot of the data (2026-10-10)
 
@@ -366,21 +366,24 @@ A dev rebuild often changes the binary's code signature, and macOS will prompt o
 | Org approval | Already done for `gh` | Required when the org gates fine-grained tokens. One owner approval | Required when the org gates OAuth apps |
 | Expiry | `gh`'s own refresh, or never, if a PAT was pasted into `gh` | Required, at most one year. A 401 means the popover asks for a new token | Access token about 8 hours. A refresh token must also live in the Keychain |
 | Secret in the app binary | None | None | The OAuth client secret has to ship inside a public desktop client |
-| Fit for this app | Convenient and broader than the app needs | Matches a single-user read-only tray app | Fits a later build that other people install |
+| Fit for this app | Convenient, and broad enough to push | Read phases stay read-only. The write phase adds Issues and Pull requests write, and still omits Contents | Fits a later build that other people install |
 
 ### Recommendation
 
-Use a fine-grained PAT in the Keychain. The tray app should not hold a credential that can push. Device flow cannot express "issues read, pull requests read, checks read", and it would embed a client secret. `gh auth token` stays available as `credential = "gh"` for a day when Bryan would rather not mint a second secret.
+Use a fine-grained PAT in the Keychain. Through Phase 4 the token is read-only. Phase 5 (row actions) needs Issues **Read and write** and Pull requests **Read and write** on the same token. Contents stays off, so the token still cannot push commits or merge. Device flow cannot express that split, and it would embed a client secret. `gh auth token` stays available as `credential = "gh"` for a day when Bryan would rather not mint a second secret. A typical `gh` token can already comment and relabel, and it can also push, which this app does not need.
 
 Token settings to document in the README:
 
 - Resource owner: `springfield-ham-radio` (add `springfield-tools` when that org is in the config)
 - Repository access: all repositories, so a new repo appears without a new token
-- Repository permissions: Metadata Read (automatic), Issues Read, Pull requests Read, Checks Read
-- Contents stays off. If a future private repo returns an empty rollup, add Contents Read then
+- Phases 1–4: Metadata Read (automatic), Issues Read, Pull requests Read, Checks Read
+- Phase 5: the same list, with Issues and Pull requests raised to Read and write. Checks stays Read. Contents stays off
+- If a future private repo returns an empty rollup, add Contents Read then
 - Expiration: 90 days is a reasonable first choice
 
-All 12 ham-radio repos are public today, so this permission set is enough for the measured query. The popover treats HTTP 401 as "token rejected" and links to the GitHub token settings page. It does not retry a 401 on the backoff schedule.
+GitHub sets fine-grained permissions when the token is created. Raising Issues and Pull requests to write usually means a new token pasted into the existing Keychain prompt. The read phases keep working if Bryan creates the write token early. A 401 still means "token rejected" and is not retried. A 403 on a comment or label call means the token is missing write, and the popover says so and links to the token settings page.
+
+All 12 ham-radio repos are public today. The read set is enough for the measured query. Commenting and labeling use the issues API for both issues and pull requests (`POST /repos/{owner}/{repo}/issues/{number}/comments`, `POST` and `DELETE` on `.../issues/{number}/labels`). Fine-grained tokens authorize those routes per item kind: Issues write for an issue, Pull requests write for a pull request. The write phase requests both.
 
 ## 5. Stack and conventions
 
@@ -511,7 +514,7 @@ Out of scope for v1. Do not build these in the phases below.
 
 - **Notifications.** When a snapshot transition moves an item into needs-input, or into CI failing, post a macOS notification. Clicking it opens the popover. Needs a baseline snapshot so the first poll after install does not notify for everything already open.
 - **Cursor cloud agent status.** v1 trusts the four labels. A later version can map a Cursor cloud-agent API, if one is available to a desktop app, onto the same groups: running to agent-working, waiting on the user to needs-input. Scraping the Cursor website is not a plan.
-- **Applying labels from the app.** That needs a write token and can move an item into the wrong group. Keep the PAT read-only. Any future write action is explicit and separate from the poller.
+- **Merge.** `POST /repos/{owner}/{repo}/pulls/{pull_number}/merge` needs a token that can update the branch, and this org's required checks are check runs, so `mergeable` is eventually consistent and easy to get wrong. A merge cannot be undone by restoring labels. It stays out of Phase 5.
 - **CLI dump** of `snapshot.json` for the morning summary, for hosts where the tray app is not running.
 - **Device-flow OAuth** and **Apple notarization**, when someone besides Bryan installs the app.
 - **Snooze, author filter, keyboard shortcut, menu-bar color dots.** Product polish after the live poll is trustworthy.
@@ -604,7 +607,83 @@ From the same checkout, set the popover interval to 1m and confirm the config fi
 
 **Bryan tests:** from `~/Development/springfield-tools/agent-dashboard`, run `yarn tauri:dev`, turn Wi-Fi off, confirm the banner and the still-visible rows, turn Wi-Fi on, confirm a refresh. Sleep the Mac briefly and confirm a refresh on wake. Pause for 1 hour, sleep again, and confirm it is still paused. Then set `pause_when_idle = true` and `idle_pause_after_seconds = 10` in `~/Library/Application Support/com.springfield.agent-dashboard/config.toml`, leave the Mac idle, and confirm the paused icon. Touch the trackpad and confirm a fetch. Set `pause_when_idle` back to false afterward.
 
-### Phase 5 — Release
+### Phase 5 — Row actions
+
+Read-only phases 1–4 stay as they are. This phase is the first one that writes to GitHub. Row click still opens the GitHub page. Actions live on a menu on the row.
+
+**Scope.** The actions below. Each one opens a confirm sheet before any request. The sheet shows the repo, number, title, the label diff, and the exact comment. Confirm sends it. Cancel sends nothing. The note field is editable on the sheet.
+
+| Action | Shown on | Labels | Comment |
+| --- | --- | --- | --- |
+| Testing passed → Ready to merge | Needs testing. Default button in that sheet | Remove `needs-testing`, add `ready-to-merge` | Audit only |
+| Testing passed → Hand back to agent | Second button on the same sheet | Remove `needs-testing`, add `agent-working` | `@cursor` plus an optional note. Same path as Send back |
+| Send back to agent | Needs testing, CI failing | Remove `needs-testing`, `needs-input`, and `ready-to-merge` when present. Add `agent-working`. Leave every other label alone | `@cursor` plus an optional note. CI failing prefills the failed check names |
+| Answer | Needs input | Remove `needs-input`, add `agent-working` | `@cursor` plus the answer. The answer is required |
+| Approve / ready to merge | Not started, and Agent working | Add `ready-to-merge`. Remove `needs-testing` when present | Audit only |
+
+Needs testing does not also show Approve. Testing passed → Ready to merge is that action. CI failing does not show Approve. Needs input shows Answer and does not show a note-less Send back.
+
+Label calls add and remove only those status labels. They do not `PUT` the full label set, so `dependencies`, `bug`, and the rest stay.
+
+**Cursor handoff.** The dashboard does not call a Cursor API. It posts a normal GitHub comment as Bryan, and the Cursor GitHub App wakes a cloud agent from that comment. Sources, checked 2026-10-10:
+
+- [Cloud Agents](https://cursor.com/docs/cloud-agent): "Comment `@cursor` on a GitHub PR or issue, or on a Bitbucket PR, to kick off an agent." The GitHub connection has to be in place first ([GitHub integration](https://cursor.com/docs/integrations/github), app listed at `github.com/apps/cursor`), the account needs repository access, and Cloud Agents need a paid Cursor plan.
+- Cursor staff on the forum: put `@cursor` at the start of the comment; that is the reliable form. The instruction is the rest of the same comment. Example shape: `@cursor read userId from req.body instead of req.query, validate as string, create a new branch and open a fix PR`. The agent reads the diff, the thread, and CI. This path works on a merged or closed PR. The dashboard only offers it on open items.
+- The same staff note: a comment on the pull request is the supported way to keep the agent on that PR's head branch. Agents started from the Cursor window open a fresh `cursor/…` branch. Agents started from a `@cursor` comment on the PR commit to the PR branch.
+- Cursor staff, April 2026: a follow-up `@cursor` comment continues the existing session on a pull request, matched by the PR branch. On a GitHub issue, each `@cursor` mention starts a new session.
+- A second Cursor user mentioning `@cursor` on a PR that already has someone else's agent is treated as a follow-up and can be denied unless team follow-ups are on. Posting as Bryan's user token, which is the PAT this app stores, makes Bryan the comment author. A GitHub App bot comment is a different author and is not the path this phase uses.
+- [Capabilities](https://cursor.com/docs/cloud-agent/capabilities): `@cursor autofix off` and `@cursor autofix on` toggle automatic CI repair on that PR. `@cursor please fix the CI failures` is an ordinary instruction. Bugbot is a different feature and starts from `cursor review` or `bugbot run`. Generated bodies must not use those strings.
+
+The comment is a top-level issue comment (`POST /repos/{owner}/{repo}/issues/{number}/comments`), which is the conversation on an issue or pull request. It is not an inline review comment.
+
+Agent-waking body:
+
+```text
+@cursor Testing did not pass. Continue on this pull request.
+<optional note Bryan typed>
+
+— Agent Dashboard
+```
+
+Answer uses the same shape with the answer in place of the default sentence. Audit-only body:
+
+```text
+Testing passed. Ready to merge.
+
+— Agent Dashboard
+```
+
+`@cursor` is the first token when the action should wake an agent. The last line is always `— Agent Dashboard`, so a comment Bryan typed by hand is distinguishable from one the tray posted. Approve uses "Approved. Ready to merge." Send back from CI failing prefills "Look at the failing checks: <names>. Continue on this pull request." On an issue, the default sentence is "Continue on this issue." and the plan records that this starts a new cloud agent session.
+
+There is no documented `@cursor stop`. Undo does not send `autofix off`.
+
+**Confirm, optimistic UI, undo.**
+
+- The first click opens the sheet. Nothing is sent until Confirm.
+- On Confirm the row moves to the destination group immediately and shows a pending mark.
+- The app posts the comment, then applies the label diff. Other labels are untouched.
+- Success clears the pending mark and keeps an undo record: previous status labels, comment id, and whether the body started with `@cursor`.
+- Failure moves the row back and shows GitHub's error. If the comment was posted and the labels failed, the banner offers Retry labels. If the labels changed and the comment failed, the banner offers Retry comment.
+- The next successful poll reconciles. When GitHub matches the optimistic labels, the pending mark drops.
+- Undo stays available until that poll or for 60 seconds, whichever comes first. Undo restores the previous status labels.
+- When the comment did not start with `@cursor`, Undo also deletes it.
+- When it did, Undo restores the labels and leaves the comment. The toast says the cloud agent may already be running.
+
+**Tests.** Unit tests for the comment builder: agent-waking bodies match `^@cursor `, every body ends with `— Agent Dashboard`, and no body contains `cursor review`, `bugbot run`, `@cursor autofix off`, or `@cursor autofix on`. Tests for the label diff cover "add and remove only the status labels". A fake HTTP layer covers comment-then-labels, each partial failure, and undo.
+
+**Acceptance.**
+
+- With a read-only token, Confirm shows the permission banner and leaves labels and comments unchanged.
+- With Issues and Pull requests write, Testing passed → Ready to merge on a scratch issue removes `needs-testing`, adds `ready-to-merge`, and posts an audit comment with no `@cursor`. Undo within the window restores the labels and deletes that comment.
+- Send back on a scratch issue posts a comment whose first token is `@cursor`, adds `agent-working`, and a cloud agent run appears for Bryan's Cursor account. Undo restores the labels and leaves the comment.
+- Answer on a `needs-input` item requires text, then does the same handoff.
+- Approve on a not-started item adds `ready-to-merge` and an audit comment.
+- A label such as `dependencies` is still present after every action.
+- The poller is unchanged: it never comments or relabels on its own.
+
+**Bryan tests.** From `~/Development/springfield-tools/agent-dashboard`, run `yarn tauri:dev`. In a scratch issue under `~/Development/springfield-ham-radio/<repo>` (create one; leave `ham-radio-ui` #84 alone), add `needs-testing`, run Testing passed → Ready to merge, and confirm the labels and the footer on GitHub. Undo from the popover and confirm the label and the comment are gone. Then Send back with a short note and confirm a cloud agent starts on that issue. Remove the scratch issue's labels when finished. Paste a write-capable token when the app reports a 403.
+
+### Phase 6 — Release
 
 **Scope:** semantic-release config and the Cargo version script, the `release` job, and a macOS-only `tauri-action` publish of an unsigned artifact. README install note matches ham-radio-ui's unsigned-build wording. Dependabot config for npm, actions, and cargo.
 
@@ -622,7 +701,7 @@ From the same checkout, set the popover interval to 1m and confirm the config fi
 2. Precedence. Should CI failing outrank needs-testing and ready-to-merge, as specified, or should a labeled item stay in its label group with a red chip?
 3. Drafts. Should `ham-radio-ui` #84 and `.github` #4 appear in Not started, or should drafts be hidden until they are marked ready?
 4. Orgs. Should the default config include `springfield-tools` as well as `springfield-ham-radio`?
-5. Auth. Is the fine-grained PAT acceptable, or do you want `credential = "gh"` as the default despite the broader scopes?
+5. Auth. Is the fine-grained PAT acceptable, or do you want `credential = "gh"` as the default despite the broader scopes? Phase 5 raises that PAT from read to Issues and Pull requests write, and still leaves Contents off.
 6. Token lifetime. 90 days, or the one-year maximum?
 7. Private repos. All 12 ham-radio repos are public. If a private repo should show up, the token needs access to it. Any planned?
 8. Bots. Is collapse-plus-surface-failures the right default, or should Dependabot be hidden entirely?
@@ -632,3 +711,7 @@ From the same checkout, set the popover interval to 1m and confirm the config fi
 12. Morning summary. Is reading `snapshot.json` from Application Support a workable handoff, and does that job run on the same Mac?
 13. Label names. `.github` pull request 4 ("Sync org issue labels from labels.yml") is still a draft. Are `agent-working`, `needs-testing`, `needs-input`, and `ready-to-merge` stable?
 14. Idle and sleep. Idle auto-pause defaults off, with a 5-minute threshold, and sleep only suspends the process. Should idle auto-pause default on? Is "until tomorrow" the next local midnight, or a morning hour?
+15. On Needs testing, is Ready to merge the default choice, with Hand back to agent as the second button?
+16. Should Approve be offered while a row is still Agent working?
+17. Answering a GitHub issue with `@cursor` starts a new cloud agent session each time. Is that acceptable, or should `@cursor` be limited to pull requests?
+18. Merge stays a later idea. Confirm that Phase 5 should not merge.
