@@ -15,6 +15,7 @@ use_etag_probe = false
 ci_max_staleness_seconds = 30
 
 [github]
+# "keychain" (default) uses Settings / Keychain. "gh" runs `gh auth token` (in-memory only).
 credential = "keychain"
 
 [filters]

@@ -22,7 +22,7 @@ Fine-grained PATs are limited to one resource owner per token. GitHub documents 
   - Expiration: 90 days, or the org/enterprise maximum if shorter.
 - **Phases 1–4:** read-only on those permissions.
 - **Phase 5:** Issues and Pull requests **read and write**; Contents stays off (no push or merge).
-- Optional config `credential = "gh"` shells out to `gh auth token` when CheckRun names or broader API access matter; that token is broader than the app needs.
+- Optional config `credential = "gh"` runs `gh auth token` on each poll (resolving `gh` from `PATH`, `/opt/homebrew/bin`, and `/usr/local/bin`). The token is kept in an in-memory session cache only, cleared on HTTP 401, and is never written to config, snapshot, logs, or Keychain. If `gh` is missing or not logged in, the popover shows a banner with remediation steps. That token is broader than a fine-grained PAT.
 
 ## CI rollup behavior
 

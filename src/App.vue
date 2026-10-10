@@ -106,34 +106,44 @@
     <dialog v-if="settingsOpen" class="settings-sheet" open @click.self="settingsOpen = false">
       <div class="settings-panel" @click.stop>
         <h2 class="settings-title">Settings</h2>
-        <p class="settings-hint">
-          Fine-grained PAT for resource owner springfield-ham-radio: Metadata, Issues, Pull
-          requests, and Commit statuses (Read). No Checks permission exists on fine-grained tokens.
-          Org may need to allow or approve the token. Stored in Keychain only — never in config or
-          snapshot. CI rollup state works; individual check names may be missing unless you use
-          <code>credential = "gh"</code> in config.
+        <p v-if="configStatus?.credentialSource === 'gh'" class="settings-hint">
+          <code>credential = "gh"</code> in config: each poll runs
+          <code>gh auth token</code> (searches PATH plus Homebrew paths). The token stays in memory
+          only for this session and is never written to config, snapshot, or logs. Run
+          <code>gh auth login</code> if you see an auth banner. Check names in CI rollup may work
+          better than a fine-grained PAT.
         </p>
-        <label class="settings-label">
-          GitHub token
-          <input
-            v-model="tokenInput"
-            type="password"
-            class="settings-input"
-            autocomplete="off"
-            placeholder="Paste fine-grained PAT once"
-          />
-        </label>
-        <p v-if="tokenMessage" class="settings-message">{{ tokenMessage }}</p>
+        <template v-else>
+          <p class="settings-hint">
+            Fine-grained PAT for resource owner springfield-ham-radio: Metadata, Issues, Pull
+            requests, and Commit statuses (Read). No Checks permission on fine-grained tokens. Org
+            may need to allow or approve the token. Stored in Keychain only — never in config or
+            snapshot.
+          </p>
+          <label class="settings-label">
+            GitHub token
+            <input
+              v-model="tokenInput"
+              type="password"
+              class="settings-input"
+              autocomplete="off"
+              placeholder="Paste fine-grained PAT once"
+            />
+          </label>
+          <p v-if="tokenMessage" class="settings-message">{{ tokenMessage }}</p>
+          <div class="settings-actions">
+            <button type="button" class="btn-primary" @click="saveToken">Save token</button>
+            <button
+              v-if="configStatus?.hasGithubToken"
+              type="button"
+              class="btn-text"
+              @click="clearToken"
+            >
+              Remove token
+            </button>
+          </div>
+        </template>
         <div class="settings-actions">
-          <button type="button" class="btn-primary" @click="saveToken">Save token</button>
-          <button
-            v-if="configStatus?.hasGithubToken"
-            type="button"
-            class="btn-text"
-            @click="clearToken"
-          >
-            Remove token
-          </button>
           <button type="button" class="btn-text" @click="settingsOpen = false">Close</button>
         </div>
       </div>

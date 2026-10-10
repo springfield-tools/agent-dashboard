@@ -58,6 +58,7 @@ export type ConfigStatus = {
   pollingPaused: boolean;
   pauseTooltip: string;
   hasGithubToken: boolean;
+  credentialSource: string;
   authError: string | null;
   offline: boolean;
   banner: string | null;

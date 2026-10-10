@@ -1,4 +1,5 @@
 mod config;
+mod credential;
 mod fixture;
 mod github;
 mod keychain;
@@ -17,7 +18,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config::{load_config, validate_poll_interval};
-use crate::keychain::{delete_token, has_token, store_token};
+use crate::credential::{credential_is_ready, credential_source_label};
+use crate::keychain::{delete_token, store_token};
 use crate::model::DashboardSnapshot;
 use crate::pause::{
     is_polling_paused, pause_for_one_hour_value, pause_manual_value,
@@ -37,6 +39,7 @@ struct ConfigStatus {
     polling_paused: bool,
     pause_tooltip: String,
     has_github_token: bool,
+    credential_source: String,
     auth_error: Option<String>,
     offline: bool,
     banner: Option<String>,
@@ -80,7 +83,8 @@ fn config_status(state: tauri::State<'_, Arc<AppState>>) -> ConfigStatus {
         fixture_mode: state.fixture_mode,
         polling_paused,
         pause_tooltip: pause_tooltip(&config.poll_pause),
-        has_github_token: has_token(),
+        has_github_token: credential_is_ready(&config),
+        credential_source: credential_source_label(&config).to_string(),
         auth_error,
         offline,
         banner,

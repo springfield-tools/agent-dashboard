@@ -19,7 +19,9 @@ Runtime config is written on first launch to `~/Library/Application Support/com.
 5. **Expiration:** 90 days (or your org’s shorter maximum).
 6. In the app, open **Settings** and paste the token once (stored in Keychain only).
 
-`statusCheckRollup.state` drives CI grouping; check **names** may be missing without the Checks API. The app still shows **CI failing** from rollup state. For full check names, set `credential = "gh"` in config (see ADR 0002).
+`statusCheckRollup.state` drives CI grouping; check **names** may be missing without the Checks API. The app still shows **CI failing** from rollup state.
+
+**Alternative:** set `credential = "gh"` under `[github]` in `~/Library/Application Support/com.springfield.agent-dashboard/config.toml`. The app runs `gh auth token` each poll (token cached in memory for the session, cleared on 401). Requires `gh` on PATH or in `/opt/homebrew/bin` or `/usr/local/bin`, and `gh auth login`. Nothing is persisted to disk or logs (see ADR 0002).
 
 ```bash
 cd ~/Development/springfield-tools/agent-dashboard

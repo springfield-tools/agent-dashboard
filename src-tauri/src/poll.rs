@@ -8,7 +8,7 @@ use tokio::sync::Notify;
 
 use crate::config::{save_config, AppConfig};
 use crate::github::{fetch_all_orgs, GraphqlError};
-use crate::keychain::load_token;
+use crate::credential::{clear_gh_session_cache, obtain_github_token, uses_gh_credential};
 use crate::model::build_dashboard;
 use crate::pause::{clear_expired_timed_pause, is_polling_paused, seconds_until_timed_resume};
 use crate::snapshot::write_snapshot_file;
@@ -20,6 +20,8 @@ pub struct PollRuntime {
     in_flight: AtomicBool,
     failure_backoff_secs: Mutex<u64>,
     rate_limit_until: Mutex<Option<DateTime<Utc>>>,
+    /// In-memory only; cleared on 401 when `credential = "gh"`.
+    gh_token_cache: Mutex<Option<String>>,
 }
 
 impl PollRuntime {
@@ -29,6 +31,7 @@ impl PollRuntime {
             in_flight: AtomicBool::new(false),
             failure_backoff_secs: Mutex::new(0),
             rate_limit_until: Mutex::new(None),
+            gh_token_cache: Mutex::new(None),
         }
     }
 }
@@ -187,26 +190,41 @@ pub async fn run_poll_cycle<R: Runtime>(
     }
 
     let result = async {
-        let token = load_token().map_err(|e| e.to_string())?;
-        let Some(token) = token else {
-            state.set_auth_error(Some("Add a GitHub token in Settings".to_string()));
-            return Ok(());
-        };
-
         let config = state
             .config
             .lock()
             .map(|c| c.clone())
             .map_err(|_| "config lock poisoned".to_string())?;
 
+        let token = match obtain_github_token(
+            &config,
+            &state.poll_runtime.gh_token_cache,
+            false,
+        ) {
+            Ok(token) => token,
+            Err(Some(message)) => {
+                state.set_auth_error(Some(message));
+                return Ok(());
+            }
+            Err(None) => return Ok(()),
+        };
+
         let fetch = fetch_all_orgs(client, &token, &config)
             .await
             .map_err(|e| match e {
                 GraphqlError::Unauthorized => {
-                    state.set_auth_error(Some(
-                        "GitHub rejected the token (401). Paste a new fine-grained PAT in Settings."
-                            .to_string(),
-                    ));
+                    if uses_gh_credential(&config) {
+                        clear_gh_session_cache(&state.poll_runtime.gh_token_cache);
+                        state.set_auth_error(Some(
+                            "GitHub rejected the gh token (401). Run `gh auth login` or refresh scopes; the next poll will call `gh auth token` again."
+                                .to_string(),
+                        ));
+                    } else {
+                        state.set_auth_error(Some(
+                            "GitHub rejected the token (401). Paste a new fine-grained PAT in Settings."
+                                .to_string(),
+                        ));
+                    }
                     "unauthorized".to_string()
                 }
                 GraphqlError::Network(msg) => {
@@ -230,8 +248,13 @@ pub async fn run_poll_cycle<R: Runtime>(
                     "rate_limited".to_string()
                 }
                 GraphqlError::Forbidden { status, message } => {
+                    let hint = if uses_gh_credential(&config) {
+                        "Check `gh auth status`, org access, and repository scopes."
+                    } else {
+                        "Check fine-grained PAT permissions, org approval, and repository access."
+                    };
                     state.set_auth_error(Some(format!(
-                        "GitHub denied access ({status}). Check fine-grained PAT permissions, org approval, and repository access."
+                        "GitHub denied access ({status}). {hint}"
                     )));
                     log::warn!("forbidden: {message}");
                     "forbidden".to_string()
