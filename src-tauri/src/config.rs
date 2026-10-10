@@ -9,7 +9,7 @@ pub const POLL_INTERVAL_MIN: u64 = 15;
 pub const POLL_INTERVAL_MAX: u64 = 900;
 pub const DEFAULT_POLL_INTERVAL: u64 = 30;
 
-const KNOWN_ROOT_KEYS: &[&str] = [
+const KNOWN_ROOT_KEYS: [&str; 11] = [
     "poll_interval_seconds",
     "pause_when_idle",
     "idle_pause_after_seconds",

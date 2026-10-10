@@ -267,7 +267,7 @@ pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str
 
     let mut bot_green = 0u32;
     let mut bot_no_ci = 0u32;
-    let bot_failing = 0u32;
+    let mut bot_failing = 0u32;
 
     let mut buckets: Vec<Vec<DashboardRow>> = vec![vec![]; GROUP_IDS.len()];
 
