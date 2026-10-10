@@ -78,12 +78,12 @@ body {
   opacity: 0.75;
 }
 
-.row {
-  display: grid;
-  grid-template-columns: auto auto 1fr;
-  gap: 6px;
-  align-items: baseline;
+.row-button {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   width: 100%;
+  margin-bottom: 6px;
   padding: 8px 10px;
   border: 1px solid rgb(0 0 0 / 8%);
   border-radius: 8px;
@@ -91,13 +91,28 @@ body {
   color: inherit;
   font: inherit;
   text-align: left;
-  cursor: default;
+  cursor: pointer;
+}
+
+.row-button:hover {
+  border-color: rgb(0 0 0 / 18%);
+}
+
+.row-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
 }
 
 @media (prefers-color-scheme: dark) {
-  .row {
+  .row-button {
     border-color: rgb(255 255 255 / 10%);
     background: rgb(0 0 0 / 25%);
+  }
+
+  .row-button:hover {
+    border-color: rgb(255 255 255 / 22%);
   }
 }
 
@@ -115,6 +130,81 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.row-meta {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.row-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.chip {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 8%);
+  font-size: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .chip {
+    background: rgb(255 255 255 / 12%);
+  }
+}
+
+.chip-kind {
+  font-weight: 600;
+}
+
+.banner {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+}
+
+.banner-error {
+  background: rgb(255 59 48 / 15%);
+  color: #c41e1e;
+}
+
+@media (prefers-color-scheme: dark) {
+  .banner-error {
+    color: #ff6b6b;
+  }
+}
+
+.empty {
+  margin: 0;
+  opacity: 0.7;
+  font-size: 12px;
+}
+
+.bot-summary {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  border: 1px dashed rgb(0 0 0 / 20%);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.footer-path {
+  display: block;
+  margin-top: 4px;
+  opacity: 0.6;
+  word-break: break-all;
 }
 
 .footer {

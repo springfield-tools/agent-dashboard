@@ -2,40 +2,92 @@
   <div class="popover">
     <header class="header">
       <span class="header-title">Agent Dashboard</span>
-      <span class="header-meta">Phase 1 · {{ sectionCount }} sections · placeholder data</span>
+      <span class="header-meta">
+        Fixture · updated {{ fetchedLabel }}
+        <template v-if="configStatus"> · every {{ configStatus.pollIntervalSeconds }}s</template>
+      </span>
+      <p v-if="configStatus?.configError" class="banner banner-error">
+        {{ configStatus.configError }}
+      </p>
     </header>
     <main class="sections">
-      <section v-for="group in groups" :key="group.id" class="section">
-        <h2 class="section-title">{{ group.title }} · 1</h2>
-        <div class="row" aria-disabled="true">
-          <span class="row-repo">springfield-tools</span>
-          <span class="row-number">#0</span>
-          <span class="row-title">{{ group.placeholderTitle }}</span>
-        </div>
+      <section v-for="group in snapshot?.groups ?? []" :key="group.id" class="section">
+        <h2 class="section-title">{{ group.title }} · {{ group.items.length }}</h2>
+        <button
+          v-for="row in group.items"
+          :key="`${row.repo}-${row.number}`"
+          type="button"
+          class="row row-button"
+          @click="openRow(row.url)"
+        >
+          <span class="row-top">
+            <span class="row-repo">{{ row.repo }}</span>
+            <span class="row-number">#{{ row.number }}</span>
+            <span v-if="row.draft" class="chip chip-kind">Draft</span>
+            <span v-else class="chip chip-kind">{{ row.kind === 'pr' ? 'PR' : 'Issue' }}</span>
+          </span>
+          <span class="row-title">{{ row.title }}</span>
+          <span class="row-meta">
+            <span class="row-author">@{{ row.author }}</span>
+            <span class="row-time">{{ formatRelativeTime(row.updatedAt) }}</span>
+          </span>
+          <span v-if="row.chips.length" class="row-chips">
+            <span v-for="chip in row.chips" :key="chip.label" class="chip">{{ chip.label }}</span>
+          </span>
+        </button>
       </section>
+      <p v-if="!snapshot?.groups.length" class="empty">No open items in this view.</p>
     </main>
     <footer class="footer">
-      <span class="footer-note">Placeholder rows are not links yet. See README and docs/PLAN.md in the repo.</span>
+      <button
+        v-if="snapshot?.bots"
+        type="button"
+        class="bot-summary"
+        @click="openRow(snapshot.bots.searchUrl)"
+      >
+        Dependabot · {{ snapshot.bots.green }} green · {{ snapshot.bots.noCi }} no CI<template
+          v-if="snapshot.bots.failing > 0"
+        >
+          · {{ snapshot.bots.failing }} failing
+        </template>
+      </button>
+      <span class="footer-note">
+        Phase 2 · 33-PR fixture · edit labels or filters.bots in config and restart
+      </span>
+      <span v-if="configStatus" class="footer-path">{{ configStatus.configPath }}</span>
     </footer>
   </div>
 </template>
 
 <script setup lang="ts">
+import { openUrl } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import { computed, onMounted, ref } from 'vue';
 
-import { PLACEHOLDER_GROUPS, type PlaceholderGroup } from './groups';
+import { formatRelativeTime } from './formatRelative';
+import type { ConfigStatus, DashboardSnapshot } from './types/dashboard';
 
-const groups: PlaceholderGroup[] = [...PLACEHOLDER_GROUPS];
-const rustGroupCount = ref<number | null>(null);
+const snapshot = ref<DashboardSnapshot | null>(null);
+const configStatus = ref<ConfigStatus | null>(null);
 
 onMounted(async () => {
   try {
-    rustGroupCount.value = await invoke<number>('placeholder_group_count');
+    snapshot.value = await invoke<DashboardSnapshot>('dashboard_snapshot');
+    configStatus.value = await invoke<ConfigStatus>('config_status');
   } catch {
-    rustGroupCount.value = null;
+    snapshot.value = null;
   }
 });
 
-const sectionCount = computed(() => rustGroupCount.value ?? groups.length);
+const fetchedLabel = computed(() => {
+  if (!snapshot.value?.fetchedAt) {
+    return '—';
+  }
+
+  return formatRelativeTime(snapshot.value.fetchedAt);
+});
+
+async function openRow(url: string): Promise<void> {
+  await openUrl(url);
+}
 </script>
