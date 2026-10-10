@@ -91,7 +91,7 @@ body {
   color: inherit;
   font: inherit;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -99,10 +99,6 @@ body {
     border-color: rgb(255 255 255 / 10%);
     background: rgb(0 0 0 / 25%);
   }
-}
-
-.row:hover {
-  border-color: rgb(0 122 255 / 45%);
 }
 
 .row-repo {
@@ -134,11 +130,6 @@ body {
   }
 }
 
-.footer-link {
-  color: #007aff;
-  text-decoration: none;
-}
-
-.footer-link:hover {
-  text-decoration: underline;
+.footer-note {
+  opacity: 0.75;
 }

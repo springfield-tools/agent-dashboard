@@ -5,7 +5,7 @@ description = "Agent Dashboard menu-bar app"
 authors = ["Bryan Hunt"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.85.0"
+rust-version = "1.90.0"
 autobins = false
 default-run = "AgentDashboard"
 

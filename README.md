@@ -6,7 +6,7 @@ The implementation plan is in [`docs/PLAN.md`](docs/PLAN.md). Accepted architect
 
 ## Development
 
-Node.js 26 (see `.nvmrc`) and Yarn 4 via Corepack. Rust and [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) are required on macOS.
+Node.js 26 (see `.nvmrc`) and Yarn 4 via Corepack. Rust **1.90 or newer** (see `rust-version` in `src-tauri/Cargo.toml`; the locked `tray-icon` crate requires 1.90) and [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) are required on macOS.
 
 ```bash
 cd ~/Development/springfield-tools/agent-dashboard
