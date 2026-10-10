@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -7,6 +8,20 @@ use thiserror::Error;
 pub const POLL_INTERVAL_MIN: u64 = 15;
 pub const POLL_INTERVAL_MAX: u64 = 900;
 pub const DEFAULT_POLL_INTERVAL: u64 = 30;
+
+const KNOWN_ROOT_KEYS: &[&str] = [
+    "poll_interval_seconds",
+    "pause_when_idle",
+    "idle_pause_after_seconds",
+    "use_etag_probe",
+    "ci_max_staleness_seconds",
+    "poll_pause",
+    "github",
+    "filters",
+    "tray",
+    "labels",
+    "orgs",
+];
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -219,7 +234,21 @@ pub fn validate_poll_interval(seconds: u64) -> Result<(), ConfigError> {
     }
 }
 
+fn log_unknown_root_keys(text: &str) {
+    let table: toml::Table = match toml::from_str(text) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let known: HashSet<&str> = KNOWN_ROOT_KEYS.iter().copied().collect();
+    for key in table.keys() {
+        if !known.contains(key.as_str()) {
+            log::warn!("config: unknown root key ignored: {key}");
+        }
+    }
+}
+
 pub fn parse_config_toml(text: &str) -> Result<AppConfig, ConfigError> {
+    log_unknown_root_keys(text);
     let config: AppConfig = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
     validate_poll_interval(config.poll_interval_seconds)?;
     Ok(config)
@@ -231,26 +260,30 @@ pub fn load_config(path: &Path) -> (AppConfig, Option<String>) {
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
-        let written = toml::to_string_pretty(&defaults).unwrap_or_default();
+        let written = example_config_text();
         if fs::write(path, written).is_err() {
+            log::warn!("config: could not write default config to {}", path.display());
             return (defaults, Some("could not write default config file".to_string()));
         }
+        log::info!("config: wrote default config to {}", path.display());
         return (defaults, None);
     }
 
     let text = match fs::read_to_string(path) {
         Ok(t) => t,
         Err(e) => {
-            return (
-                AppConfig::default(),
-                Some(format!("failed to read config: {e}")),
-            );
+            let msg = format!("failed to read config: {e}");
+            log::warn!("config: {msg}");
+            return (AppConfig::default(), Some(msg));
         }
     };
 
     match parse_config_toml(&text) {
         Ok(config) => (config, None),
-        Err(e) => (AppConfig::default(), Some(e.to_string())),
+        Err(e) => {
+            log::warn!("config: parse failed, using defaults: {e}");
+            (AppConfig::default(), Some(e.to_string()))
+        }
     }
 }
 
@@ -287,5 +320,11 @@ mod tests {
     fn defaults_bots_to_collapse() {
         let config = parse_config_toml("poll_interval_seconds = 30\n").expect("parse");
         assert_eq!(config.filters.bots, BotFilterMode::Collapse);
+    }
+
+    #[test]
+    fn first_launch_template_is_example_toml() {
+        assert!(example_config_text().contains("filters.bots"));
+        assert!(example_config_text().contains("# hide | collapse | show"));
     }
 }

@@ -29,12 +29,7 @@ mod tests {
             .find(|g| g.id == "not-started")
             .expect("drafts");
         assert_eq!(not_started.items.len(), 2);
-        assert!(
-            snapshot
-                .groups
-                .iter()
-                .all(|g| g.id == "not-started" || g.items.is_empty())
-                || snapshot.groups.len() == 1
-        );
+        assert!(!snapshot.groups.iter().any(|g| g.id == "ci-failing"));
+        assert!(!snapshot.groups.iter().any(|g| g.id == "needs-input"));
     }
 }

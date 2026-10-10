@@ -1,6 +1,5 @@
 mod config;
 mod fixture;
-mod groups;
 mod model;
 mod popover_anchor;
 mod state;
@@ -47,11 +46,6 @@ fn config_status(state: tauri::State<'_, AppState>) -> ConfigStatus {
     }
 }
 
-#[tauri::command]
-fn placeholder_group_count() -> usize {
-    groups::group_count()
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let mut builder = tauri::Builder::default()
@@ -61,11 +55,7 @@ pub fn run() {
                 .build(),
         )
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![
-            dashboard_snapshot,
-            config_status,
-            placeholder_group_count
-        ]);
+        .invoke_handler(tauri::generate_handler![dashboard_snapshot, config_status]);
 
     builder = builder.setup(|app| {
         let config_dir = app

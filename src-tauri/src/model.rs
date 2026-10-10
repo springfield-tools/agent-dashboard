@@ -222,20 +222,34 @@ fn bot_search_url(org: &str) -> String {
     )
 }
 
+/// `counts` must be in [`TRAY_COUNT_IDS`] order: input · testing · failing · merge.
 pub fn format_tray_title(counts: &[(String, u32)]) -> String {
-    let mut parts = Vec::new();
-    for (id, count) in counts {
-        if TRAY_COUNT_IDS.contains(&id.as_str()) {
-            parts.push(count.to_string());
-        }
-    }
-    if parts.len() != 4 {
+    if counts.len() != TRAY_COUNT_IDS.len() {
         return String::new();
     }
+    for (expected, (id, _)) in TRAY_COUNT_IDS.iter().zip(counts.iter()) {
+        if id != expected {
+            return String::new();
+        }
+    }
+    let parts: Vec<String> = counts.iter().map(|(_, n)| n.to_string()).collect();
     if parts.iter().all(|p| *p == "0") {
         return String::new();
     }
     parts.join("·")
+}
+
+fn tray_counts_in_adr_order(buckets: &[Vec<DashboardRow>]) -> Vec<(String, u32)> {
+    TRAY_COUNT_IDS
+        .iter()
+        .map(|id| {
+            let idx = GROUP_IDS
+                .iter()
+                .position(|g| g == id)
+                .expect("tray slot maps to group id");
+            (id.to_string(), buckets[idx].len() as u32)
+        })
+        .collect()
 }
 
 pub fn tray_tooltip() -> String {
@@ -272,11 +286,13 @@ pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str
                 }
                 BotFilterMode::Collapse => {
                     if surface_failing && failing {
+                        bot_failing += 1;
                         push_row(&mut buckets, "ci-failing", item, labels);
                     } else {
                         match item.ci.as_ref().and_then(|c| c.state.as_deref()) {
                             Some("SUCCESS") => bot_green += 1,
                             None => bot_no_ci += 1,
+                            Some("FAILURE") | Some("ERROR") => bot_failing += 1,
                             _ => {}
                         }
                     }
@@ -290,7 +306,6 @@ pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str
     }
 
     let mut groups = Vec::new();
-    let mut tray_counts: Vec<(String, u32)> = Vec::new();
 
     for (idx, id) in GROUP_IDS.iter().enumerate() {
         let rows = &mut buckets[idx];
@@ -303,12 +318,9 @@ pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str
                 items: rows.clone(),
             });
         }
-
-        if TRAY_COUNT_IDS.contains(id) {
-            tray_counts.push((id.to_string(), rows.len() as u32));
-        }
     }
 
+    let tray_counts = tray_counts_in_adr_order(&buckets);
     let tray_title = format_tray_title(&tray_counts);
     let tray_tooltip = if tray_title.is_empty() {
         empty_tray_tooltip()
@@ -503,6 +515,101 @@ mod tests {
         let snapshot = build_dashboard(vec![], &AppConfig::default(), "now");
         assert!(snapshot.tray_title.is_empty());
         assert_eq!(snapshot.tray_tooltip, empty_tray_tooltip());
+    }
+
+    #[test]
+    fn tray_title_uses_adr_slot_order() {
+        let counts = vec![
+            ("needs-input".to_string(), 1),
+            ("needs-testing".to_string(), 2),
+            ("ci-failing".to_string(), 3),
+            ("ready-to-merge".to_string(), 4),
+        ];
+        assert_eq!(format_tray_title(&counts), "1·2·3·4");
+    }
+
+    #[test]
+    fn tray_title_from_groups_follows_input_testing_failing_merge() {
+        let mut config = AppConfig::default();
+        config.filters.bots = BotFilterMode::Show;
+
+        let items = vec![
+            sample_item(vec!["needs-input"], Some("SUCCESS")),
+            sample_item(vec!["needs-testing"], Some("SUCCESS")),
+            RawItem {
+                kind: ItemKind::Pr,
+                org: "o".to_string(),
+                repo: "r".to_string(),
+                number: 3,
+                title: "fail".to_string(),
+                url: "https://example.com".to_string(),
+                author: "human".to_string(),
+                updated_at: "2026-10-10T12:00:00Z".to_string(),
+                is_draft: false,
+                labels: vec![],
+                ci: Some(CiSnapshot {
+                    state: Some("FAILURE".to_string()),
+                    failed_checks: vec![],
+                }),
+            },
+            sample_item(vec!["ready-to-merge"], Some("SUCCESS")),
+        ];
+
+        let snapshot = build_dashboard(items, &config, "now");
+        assert_eq!(snapshot.tray_title, "1·1·1·1");
+    }
+
+    #[test]
+    fn hide_mode_drops_bots_from_groups_and_footer() {
+        let mut config = AppConfig::default();
+        config.filters.bots = BotFilterMode::Hide;
+        let item = RawItem {
+            kind: ItemKind::Pr,
+            org: "springfield-ham-radio".to_string(),
+            repo: "ham-radio-docs".to_string(),
+            number: 9,
+            title: "bot pr".to_string(),
+            url: "https://example.com".to_string(),
+            author: "dependabot[bot]".to_string(),
+            updated_at: "2026-10-10T12:00:00Z".to_string(),
+            is_draft: false,
+            labels: vec![],
+            ci: Some(CiSnapshot {
+                state: Some("SUCCESS".to_string()),
+                failed_checks: vec![],
+            }),
+        };
+        let snapshot = build_dashboard(vec![item], &config, "now");
+        assert!(snapshot.bots.is_none());
+        assert!(snapshot.groups.is_empty());
+    }
+
+    #[test]
+    fn collapse_without_surface_failing_keeps_red_bot_in_footer() {
+        let mut config = AppConfig::default();
+        config.filters.bots = BotFilterMode::Collapse;
+        config.filters.surface_failing_bots = false;
+        let item = RawItem {
+            kind: ItemKind::Pr,
+            org: "springfield-ham-radio".to_string(),
+            repo: "ham-radio-docs".to_string(),
+            number: 9,
+            title: "bot fail".to_string(),
+            url: "https://example.com".to_string(),
+            author: "dependabot[bot]".to_string(),
+            updated_at: "2026-10-10T12:00:00Z".to_string(),
+            is_draft: false,
+            labels: vec![],
+            ci: Some(CiSnapshot {
+                state: Some("FAILURE".to_string()),
+                failed_checks: vec![],
+            }),
+        };
+        let snapshot = build_dashboard(vec![item], &config, "now");
+        assert!(snapshot.groups.is_empty());
+        let bots = snapshot.bots.expect("footer");
+        assert_eq!(bots.failing, 1);
+        assert_eq!(bots.green, 0);
     }
 
     #[test]

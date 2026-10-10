@@ -45,7 +45,11 @@
         class="bot-summary"
         @click="openRow(snapshot.bots.searchUrl)"
       >
-        Dependabot · {{ snapshot.bots.green }} green · {{ snapshot.bots.noCi }} no CI
+        Dependabot · {{ snapshot.bots.green }} green · {{ snapshot.bots.noCi }} no CI<template
+          v-if="snapshot.bots.failing > 0"
+        >
+          · {{ snapshot.bots.failing }} failing
+        </template>
       </button>
       <span class="footer-note">
         Phase 2 · 33-PR fixture · edit labels or filters.bots in config and restart
