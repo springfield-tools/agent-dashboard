@@ -663,7 +663,7 @@ mod tests {
             org: "springfield-ham-radio".to_string(),
             repo: "ham-radio-ui".to_string(),
             number: 1,
-            title: "red",
+            title: "red".to_string(),
             url: "https://example.com".to_string(),
             author: "human".to_string(),
             updated_at: "2026-10-10T12:00:00Z".to_string(),
