@@ -254,19 +254,61 @@ pub fn parse_config_toml(text: &str) -> Result<AppConfig, ConfigError> {
     Ok(config)
 }
 
-pub fn load_config(path: &Path) -> (AppConfig, Option<String>) {
+/// True when the file is missing or has no non-whitespace content (including 0-byte files).
+pub fn is_config_missing_or_blank(path: &Path) -> bool {
     if !path.exists() {
-        let defaults = AppConfig::default();
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+        return true;
+    }
+    match fs::metadata(path) {
+        Ok(meta) if meta.len() == 0 => return true,
+        Ok(_) => {}
+        Err(_) => return false,
+    }
+    match fs::read_to_string(path) {
+        Ok(text) => text.trim().is_empty(),
+        Err(_) => false,
+    }
+}
+
+/// Write the commented example to `path` via a temp file in the same directory, then rename.
+pub fn write_example_config_atomic(path: &Path) -> Result<(), String> {
+    let content = example_config_text();
+    if content.trim().is_empty() {
+        return Err("embedded example config is empty".to_string());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("create config dir: {e}"))?;
+    }
+    let file_name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "config.toml".to_string());
+    let temp_path = path.with_file_name(format!(".{file_name}.tmp"));
+    fs::write(&temp_path, content).map_err(|e| format!("write temp config: {e}"))?;
+    fs::rename(&temp_path, path).map_err(|e| {
+        let _ = fs::remove_file(&temp_path);
+        format!("rename config into place: {e}")
+    })?;
+    Ok(())
+}
+
+fn seed_default_config_file(path: &Path) -> (AppConfig, Option<String>) {
+    let defaults = AppConfig::default();
+    match write_example_config_atomic(path) {
+        Ok(()) => {
+            log::info!("config: wrote default config to {}", path.display());
+            (defaults, None)
         }
-        let written = example_config_text();
-        if fs::write(path, written).is_err() {
-            log::warn!("config: could not write default config to {}", path.display());
-            return (defaults, Some("could not write default config file".to_string()));
+        Err(e) => {
+            log::warn!("config: could not write default config to {}: {e}", path.display());
+            (defaults, Some(e))
         }
-        log::info!("config: wrote default config to {}", path.display());
-        return (defaults, None);
+    }
+}
+
+pub fn load_config(path: &Path) -> (AppConfig, Option<String>) {
+    if is_config_missing_or_blank(path) {
+        return seed_default_config_file(path);
     }
 
     let text = match fs::read_to_string(path) {
@@ -327,5 +369,44 @@ mod tests {
         assert!(example_config_text().contains("[filters]"));
         assert!(example_config_text().contains("bots = \"collapse\""));
         assert!(example_config_text().contains("# hide | collapse | show"));
+        assert!(!example_config_text().trim().is_empty());
+    }
+
+    #[test]
+    fn empty_existing_file_is_replaced_with_example() {
+        let dir = std::env::temp_dir().join("agent-dashboard-config-empty-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("tmpdir");
+        let path = dir.join("config.toml");
+        fs::write(&path, "").expect("empty file");
+
+        let (config, err) = load_config(&path);
+        assert!(err.is_none());
+        assert_eq!(config.poll_interval_seconds, DEFAULT_POLL_INTERVAL);
+
+        let written = fs::read_to_string(&path).expect("read config");
+        assert!(written.contains("[filters]"));
+        assert!(written.contains("bots = \"collapse\""));
+        assert!(!written.trim().is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_nonempty_config_is_not_overwritten() {
+        let dir = std::env::temp_dir().join("agent-dashboard-config-invalid-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("tmpdir");
+        let path = dir.join("config.toml");
+        let invalid = "poll_interval_seconds = 14\n";
+        fs::write(&path, invalid).expect("write invalid");
+
+        let (_config, err) = load_config(&path);
+        assert!(err.is_some());
+
+        let on_disk = fs::read_to_string(&path).expect("read config");
+        assert_eq!(on_disk, invalid);
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
