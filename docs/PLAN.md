@@ -9,6 +9,8 @@ Local checkouts, used in every setup and test step below:
 - This repo: `~/Development/springfield-tools/agent-dashboard`
 - Ham radio repos: `~/Development/springfield-ham-radio/<repo>`
 
+**Architecture decisions (accepted):** [docs/adr/](adr/README.md) — stack, auth, polling, and status precedence.
+
 ## Recommendation
 
 Build a Tauri 2 macOS tray app. Rust owns polling, the keychain, and grouping. Vue 3 renders one popover. The first phases ship a fine-grained read-only personal access token in the macOS Keychain. A later phase adds issue and pull-request write so a row can change labels and post a comment. Poll with one GitHub GraphQL search per org. The interval is a setting in the config file and in the popover, default 30 seconds, allowed range 15 seconds to 15 minutes. Read CI from `statusCheckRollup`. Pause and resume from the tray menu or the popover, including "for 1 hour" and "until tomorrow". The icon shows a paused state while polling is stopped. Keep the bot filter configurable, defaulting to a collapsed Dependabot row that still surfaces failing bot PRs.
