@@ -44,9 +44,9 @@ fn position_popover_below_tray<R: Runtime>(window: &tauri::WebviewWindow<R>, rec
     let scale = window.scale_factor().unwrap_or(1.0);
     let pos = rect.position.to_physical(scale);
     let size = rect.size.to_physical(scale);
-    let icon_center_x = pos.x + size.width / 2.0;
+    let icon_center_x: f64 = pos.x as f64 + size.width as f64 / 2.0;
     let x = (icon_center_x - POPOVER_WIDTH as f64 / 2.0).round() as i32;
-    let y = (pos.y + size.height).round() as i32;
+    let y = (pos.y as f64 + size.height as f64).round() as i32;
 
     let _ = window.set_position(Position::Physical(PhysicalPosition::new(x, y)));
 }
