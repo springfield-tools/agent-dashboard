@@ -1,8 +1,8 @@
 # agent-dashboard
 
-A Mac menu-bar dashboard for tracking Cursor cloud agent work across GitHub repos. It provides a daily summary plus a Tauri 2 tray app that refreshes every 30 seconds, grouping issues and pull requests by status: **Agent working** (`agent-working`), **Needs testing** (`needs-testing`), **Needs input** (`needs-input`), **Ready to merge** (`ready-to-merge`), **CI failing**, and **Not started**.
+A Mac menu-bar dashboard for tracking Cursor cloud agent work across GitHub repos. The Tauri 2 tray app refreshes every 30 seconds and groups issues and pull requests by status: **Agent working** (`agent-working`), **Needs testing** (`needs-testing`), **Needs input** (`needs-input`), **Ready to merge** (`ready-to-merge`), **CI failing**, and **Not started**.
 
-The implementation plan is coming in [`docs/PLAN.md`](docs/PLAN.md).
+The implementation plan is in [`docs/PLAN.md`](docs/PLAN.md). A separate daily morning summary lives outside this repo; the plan describes the snapshot file it can read.
 
 ## License
 
