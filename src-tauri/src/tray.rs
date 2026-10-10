@@ -7,7 +7,7 @@ use tauri::{
     Emitter, Manager, Monitor, Position, Rect, Runtime, WebviewWindow,
 };
 
-use crate::model::DashboardSnapshot;
+use crate::model::{snapshot_is_stale, DashboardSnapshot};
 use crate::pause::{is_polling_paused, pause_tooltip};
 use crate::popover_anchor::{
     logical_position_tauri, physical_tray_rect, popover_logical_position, PhysicalTrayRect,
@@ -152,6 +152,34 @@ fn resume_polling<R: Runtime>(app: &tauri::AppHandle<R>) {
         config.poll_pause = None;
         if update_config_and_save(state.inner(), config).is_ok() {
             sync_tray_paused(app, false);
+        }
+    }
+}
+
+fn maybe_refresh_stale_snapshot<R: Runtime>(app: &tauri::AppHandle<R>) {
+    if let Some(state) = app.try_state::<Arc<AppState>>() {
+        if state.fixture_mode {
+            return;
+        }
+        let paused = state
+            .config
+            .lock()
+            .map(|c| is_polling_paused(&c.poll_pause))
+            .unwrap_or(false);
+        if paused {
+            return;
+        }
+        let interval = state
+            .config
+            .lock()
+            .map(|c| c.poll_interval_seconds)
+            .unwrap_or(30);
+        let stale = state
+            .dashboard
+            .lock()
+            .map(|d| snapshot_is_stale(&d.fetched_at, interval))
+            .unwrap_or(true);
+        if stale {
             trigger_refresh(app, false);
         }
     }
@@ -279,6 +307,6 @@ fn toggle_popover<R: Runtime>(app: &tauri::AppHandle<R>, tray_rect: Option<Rect>
 
         let _ = window.show();
         let _ = window.set_focus();
-        trigger_refresh(app, false);
+        maybe_refresh_stale_snapshot(app);
     }
 }

@@ -107,7 +107,11 @@
       <div class="settings-panel" @click.stop>
         <h2 class="settings-title">Settings</h2>
         <p class="settings-hint">
-          Fine-grained GitHub PAT is stored in the macOS Keychain (never in config or snapshot).
+          Fine-grained PAT for resource owner springfield-ham-radio: Metadata, Issues, Pull
+          requests, and Commit statuses (Read). No Checks permission exists on fine-grained tokens.
+          Org may need to allow or approve the token. Stored in Keychain only — never in config or
+          snapshot. CI rollup state works; individual check names may be missing unless you use
+          <code>credential = "gh"</code> in config.
         </p>
         <label class="settings-label">
           GitHub token

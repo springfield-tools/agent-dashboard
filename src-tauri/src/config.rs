@@ -341,10 +341,35 @@ pub fn example_config_text() -> &'static str {
     include_str!("../../config.example.toml")
 }
 
+/// Writes runtime-updated keys into the on-disk TOML without stripping comments.
 pub fn save_config(path: &Path, config: &AppConfig) -> Result<(), String> {
     validate_poll_interval(config.poll_interval_seconds).map_err(|e| e.to_string())?;
-    let text = toml::to_string_pretty(config).map_err(|e| e.to_string())?;
+
+    let text = if path.exists() {
+        let existing = fs::read_to_string(path).map_err(|e| format!("read config: {e}"))?;
+        patch_config_document(&existing, config)?
+    } else {
+        toml::to_string_pretty(config).map_err(|e| e.to_string())?
+    };
     write_file_atomic(path, &text)
+}
+
+fn patch_config_document(existing: &str, config: &AppConfig) -> Result<String, String> {
+    use toml_edit::{value, DocumentMut};
+
+    let mut doc = existing
+        .parse::<DocumentMut>()
+        .map_err(|e| format!("parse config for save: {e}"))?;
+
+    doc["poll_interval_seconds"] = value(i64::try_from(config.poll_interval_seconds).unwrap_or(30));
+    match &config.poll_pause {
+        Some(pause) => doc["poll_pause"] = value(pause.as_str()),
+        None => {
+            doc.remove("poll_pause");
+        }
+    }
+
+    Ok(doc.to_string())
 }
 
 #[cfg(test)]
@@ -402,6 +427,29 @@ mod tests {
         assert!(written.contains("[filters]"));
         assert!(written.contains("bots = \"collapse\""));
         assert!(!written.trim().is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_preserves_comments() {
+        let dir = std::env::temp_dir().join("agent-dashboard-config-comment-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("tmpdir");
+        let path = dir.join("config.toml");
+        let original = "# header comment\npoll_interval_seconds = 30\n# footer\n";
+        fs::write(&path, original).expect("write");
+
+        let mut config = AppConfig::default();
+        config.poll_interval_seconds = 60;
+        config.poll_pause = Some("manual".to_string());
+        save_config(&path, &config).expect("save");
+
+        let written = fs::read_to_string(&path).expect("read");
+        assert!(written.contains("# header comment"));
+        assert!(written.contains("# footer"));
+        assert!(written.contains("poll_interval_seconds = 60"));
+        assert!(written.contains("poll_pause = \"manual\""));
 
         let _ = fs::remove_dir_all(&dir);
     }

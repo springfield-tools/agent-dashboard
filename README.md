@@ -8,7 +8,18 @@ The implementation plan is in [`docs/PLAN.md`](docs/PLAN.md). Accepted architect
 
 Node.js 26 (see `.nvmrc`) and Yarn 4 via Corepack. Rust **1.90 or newer** (see `rust-version` in `src-tauri/Cargo.toml`; the locked `tray-icon` crate requires 1.90) and [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) are required on macOS.
 
-Runtime config is written on first launch to `~/Library/Application Support/com.springfield.agent-dashboard/config.toml`. See [`config.example.toml`](config.example.toml). Phase 2 loads the checked-in GraphQL-shaped fixture (`src-tauri/fixtures/ham-radio-open.json`); live polling arrives in Phase 3.
+Runtime config is written on first launch to `~/Library/Application Support/com.springfield.agent-dashboard/config.toml`. See [`config.example.toml`](config.example.toml). Live mode polls GitHub; offline fixture demo: `yarn tauri:dev:fixture`.
+
+### GitHub fine-grained PAT (one-time)
+
+1. GitHub → **Settings** → **Developer settings** → **Fine-grained tokens** → **Generate new token**.
+2. **Resource owner:** `springfield-ham-radio`. If the org does not appear, an owner must allow fine-grained PATs. If the org requires approval, submit a justification; the token can read public repos until approved.
+3. **Repository access:** All repositories.
+4. **Permissions:** **Metadata** Read (automatic), **Issues** Read, **Pull requests** Read, **Commit statuses** Read. There is no **Checks** permission on fine-grained tokens. Leave **Contents** off unless CI rollups come back empty.
+5. **Expiration:** 90 days (or your org’s shorter maximum).
+6. In the app, open **Settings** and paste the token once (stored in Keychain only).
+
+`statusCheckRollup.state` drives CI grouping; check **names** may be missing without the Checks API. The app still shows **CI failing** from rollup state. For full check names, set `credential = "gh"` in config (see ADR 0002).
 
 ```bash
 cd ~/Development/springfield-tools/agent-dashboard

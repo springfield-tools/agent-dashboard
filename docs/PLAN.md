@@ -363,7 +363,7 @@ A dev rebuild often changes the binary's code signature, and macOS will prompt o
 
 | | `gh auth token` | Fine-grained PAT | Device-flow OAuth app |
 | --- | --- | --- | --- |
-| Privilege | Whatever `gh` already has. Often `repo` plus the ability to push and admin | Read-only Issues, Pull requests, and Checks on the chosen org | Classic scopes only. Private repos mean the `repo` scope, which can push |
+| Privilege | Whatever `gh` already has. Often `repo` plus the ability to push and admin | Read-only Issues, Pull requests, and Commit statuses on the chosen org (no separate Checks permission on fine-grained PATs) | Classic scopes only. Private repos mean the `repo` scope, which can push |
 | Setup | Lowest if `gh` is already logged in. The app depends on the `gh` binary and on calling it every poll so a refreshed token is picked up | Create a token, paste it once, approve it for the org if the org requires that | Register an OAuth app, implement device flow and refresh, get the app approved for the org |
 | Org approval | Already done for `gh` | Required when the org gates fine-grained tokens. One owner approval | Required when the org gates OAuth apps |
 | Expiry | `gh`'s own refresh, or never, if a PAT was pasted into `gh` | Required, at most one year. A 401 means the popover asks for a new token | Access token about 8 hours. A refresh token must also live in the Keychain |
@@ -378,8 +378,8 @@ Token settings to document in the README:
 
 - Resource owner: `springfield-ham-radio` (add `springfield-tools` when that org is in the config)
 - Repository access: all repositories, so a new repo appears without a new token
-- Phases 1–4: Metadata Read (automatic), Issues Read, Pull requests Read, Checks Read
-- Phase 5: the same list, with Issues and Pull requests raised to Read and write. Checks stays Read. Contents stays off
+- Phases 1–4: Metadata Read (automatic), Issues Read, Pull requests Read, Commit statuses Read. Fine-grained PATs have no **Checks** permission; `statusCheckRollup.state` still works on public repos, but `CheckRun` names in rollup contexts may be empty until GitHub closes that gap (or use `credential = "gh"`).
+- Phase 5: the same list, with Issues and Pull requests raised to Read and write. Commit statuses stays Read. Contents stays off unless rollups come back empty on a private repo
 - If a future private repo returns an empty rollup, add Contents Read then
 - Expiration: 90 days is a reasonable first choice
 

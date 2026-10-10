@@ -261,6 +261,17 @@ pub fn empty_tray_tooltip() -> String {
     "Nothing waiting on you".to_string()
 }
 
+/// True when the snapshot is at least `interval_secs` old (or timestamp is unparseable).
+pub fn snapshot_is_stale(fetched_at: &str, interval_secs: u64) -> bool {
+    match chrono::DateTime::parse_from_rfc3339(fetched_at) {
+        Ok(ts) => {
+            let age = chrono::Utc::now() - ts.with_timezone(&chrono::Utc);
+            age.num_seconds() >= interval_secs as i64
+        }
+        Err(_) => true,
+    }
+}
+
 pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str) -> DashboardSnapshot {
     let labels = &config.labels;
     let bot_mode = config.filters.bots;
@@ -295,7 +306,7 @@ pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str
                             Some("SUCCESS") => bot_green += 1,
                             None => bot_no_ci += 1,
                             Some("FAILURE") | Some("ERROR") => bot_failing += 1,
-                            Some("PENDING") => bot_pending += 1,
+                            Some("PENDING") | Some("EXPECTED") => bot_pending += 1,
                             _ => {}
                         }
                     }
@@ -642,6 +653,63 @@ mod tests {
         let bots = snapshot.bots.expect("footer");
         assert_eq!(bots.pending, 1);
         assert_eq!(bots.green, 0);
+    }
+
+    #[test]
+    fn ci_failing_without_check_names_still_groups() {
+        let config = AppConfig::default();
+        let item = RawItem {
+            kind: ItemKind::Pr,
+            org: "springfield-ham-radio".to_string(),
+            repo: "ham-radio-ui".to_string(),
+            number: 1,
+            title: "red",
+            url: "https://example.com".to_string(),
+            author: "human".to_string(),
+            updated_at: "2026-10-10T12:00:00Z".to_string(),
+            is_draft: false,
+            labels: vec![],
+            ci: Some(CiSnapshot {
+                state: Some("FAILURE".to_string()),
+                failed_checks: vec![],
+            }),
+        };
+        let snapshot = build_dashboard(vec![item], &config, "now");
+        assert_eq!(snapshot.groups[0].id, "ci-failing");
+    }
+
+    #[test]
+    fn snapshot_stale_after_interval() {
+        let old = (chrono::Utc::now() - chrono::Duration::seconds(120))
+            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        assert!(snapshot_is_stale(&old, 60));
+        let fresh = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+        assert!(!snapshot_is_stale(&fresh, 60));
+    }
+
+    #[test]
+    fn collapse_counts_expected_bots_with_pending() {
+        let mut config = AppConfig::default();
+        config.filters.bots = BotFilterMode::Collapse;
+        let item = RawItem {
+            kind: ItemKind::Pr,
+            org: "springfield-ham-radio".to_string(),
+            repo: "ham-radio-docs".to_string(),
+            number: 10,
+            title: "bot expected".to_string(),
+            url: "https://example.com".to_string(),
+            author: "dependabot[bot]".to_string(),
+            updated_at: "2026-10-10T12:00:00Z".to_string(),
+            is_draft: false,
+            labels: vec![],
+            ci: Some(CiSnapshot {
+                state: Some("EXPECTED".to_string()),
+                failed_checks: vec![],
+            }),
+        };
+        let snapshot = build_dashboard(vec![item], &config, "now");
+        let bots = snapshot.bots.expect("footer");
+        assert_eq!(bots.pending, 1);
     }
 
     #[test]

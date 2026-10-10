@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::Notify;
 
@@ -19,6 +19,7 @@ pub struct PollRuntime {
     pub wake: Notify,
     in_flight: AtomicBool,
     failure_backoff_secs: Mutex<u64>,
+    rate_limit_until: Mutex<Option<DateTime<Utc>>>,
 }
 
 impl PollRuntime {
@@ -27,8 +28,60 @@ impl PollRuntime {
             wake: Notify::new(),
             in_flight: AtomicBool::new(false),
             failure_backoff_secs: Mutex::new(0),
+            rate_limit_until: Mutex::new(None),
         }
     }
+}
+
+fn apply_jitter(base_secs: u64) -> u64 {
+    if base_secs == 0 {
+        return 0;
+    }
+    let jitter = (Utc::now().timestamp_subsec_nanos() as u64) % (base_secs / 4 + 1);
+    base_secs + jitter
+}
+
+fn rate_limit_wait_secs(runtime: &PollRuntime) -> u64 {
+    let guard = runtime.rate_limit_until.lock().ok();
+    let Some(until) = guard.and_then(|g| *g) else {
+        return 0;
+    };
+    let remaining = (until - Utc::now()).num_seconds();
+    if remaining <= 0 {
+        0
+    } else {
+        remaining as u64
+    }
+}
+
+fn set_rate_limit_until(runtime: &PollRuntime, retry_after_secs: Option<u64>, reset_at: Option<&str>) {
+    let until = if let Some(secs) = retry_after_secs {
+        Utc::now() + chrono::Duration::seconds(secs as i64)
+    } else if let Some(reset) = reset_at {
+        DateTime::parse_from_rfc3339(reset)
+            .map(|t| t.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now() + chrono::Duration::minutes(5))
+    } else {
+        Utc::now() + chrono::Duration::minutes(5)
+    };
+    if let Ok(mut guard) = runtime.rate_limit_until.lock() {
+        *guard = Some(until);
+    }
+}
+
+async fn sleep_until_deadline(
+    runtime: &Arc<PollRuntime>,
+    deadline: DateTime<Utc>,
+) -> bool {
+    while Utc::now() < deadline {
+        let remaining = (deadline - Utc::now()).num_seconds().max(1) as u64;
+        let slice = remaining.min(5);
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(slice)) => {},
+            _ = runtime.wake.notified() => return true,
+        }
+    }
+    false
 }
 
 pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<PollRuntime>) {
@@ -52,6 +105,7 @@ pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<
                 .lock()
                 .map(|g| *g)
                 .unwrap_or(0);
+            let rate_wait = rate_limit_wait_secs(&runtime);
 
             if !state.fixture_mode {
                 let mut resumed_from_timed_pause = false;
@@ -95,12 +149,11 @@ pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<
                     .and_then(|c| seconds_until_timed_resume(&c.poll_pause))
                     .unwrap_or(interval_secs)
             } else {
-                interval_secs.max(extra_backoff)
+                interval_secs.max(extra_backoff).max(rate_wait)
             };
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_secs(sleep_secs)) => {},
-                _ = runtime.wake.notified() => {},
-            }
+            let sleep_secs = apply_jitter(sleep_secs);
+            let deadline = Utc::now() + chrono::Duration::seconds(sleep_secs as i64);
+            let _ = sleep_until_deadline(&runtime, deadline).await;
         }
     });
 }
@@ -160,19 +213,37 @@ pub async fn run_poll_cycle<R: Runtime>(
                     state.set_offline(true);
                     msg
                 }
-                GraphqlError::Http { status, body } => {
-                    if status == 403 || status == 429 {
-                        state.set_banner(Some(format!(
-                            "GitHub rate limit ({status}). Will retry on the next interval."
-                        )));
-                    }
-                    format!("http {status}: {body}")
+                GraphqlError::RateLimited {
+                    retry_after_secs,
+                    reset_at,
+                    message,
+                } => {
+                    set_rate_limit_until(
+                        &state.poll_runtime,
+                        retry_after_secs,
+                        reset_at.as_deref(),
+                    );
+                    state.set_banner(Some(format!(
+                        "GitHub rate limit. Will retry after the reset window."
+                    )));
+                    log::warn!("rate limited: {message}");
+                    "rate_limited".to_string()
+                }
+                GraphqlError::Forbidden { status, message } => {
+                    state.set_auth_error(Some(format!(
+                        "GitHub denied access ({status}). Check fine-grained PAT permissions, org approval, and repository access."
+                    )));
+                    log::warn!("forbidden: {message}");
+                    "forbidden".to_string()
                 }
                 GraphqlError::GraphQl(msg) => msg,
             })?;
 
         state.set_auth_error(None);
         state.set_offline(false);
+        if let Ok(mut guard) = state.poll_runtime.rate_limit_until.lock() {
+            *guard = None;
+        }
         if let Some(w) = fetch.warning {
             state.set_banner(Some(w));
         } else {
@@ -193,7 +264,18 @@ pub async fn run_poll_cycle<R: Runtime>(
         }
 
         if let Some(rl) = fetch.rate_limit {
-            if rl.remaining < 500 {
+            if rl.remaining < 100 {
+                set_rate_limit_until(
+                    &state.poll_runtime,
+                    None,
+                    Some(rl.reset_at.as_str()),
+                );
+                state.set_banner(Some(format!(
+                    "GraphQL budget very low ({} remaining until {}). Polling pauses until reset.",
+                    rl.remaining,
+                    rl.reset_at
+                )));
+            } else if rl.remaining < 500 {
                 state.set_banner(Some(format!(
                     "GraphQL budget low ({} remaining until {})",
                     rl.remaining,
@@ -217,7 +299,7 @@ pub async fn run_poll_cycle<R: Runtime>(
             Ok(())
         }
         Err(msg) => {
-            if msg != "unauthorized" {
+            if msg != "unauthorized" && msg != "forbidden" && msg != "rate_limited" {
                 log::warn!("poll failed: {msg}");
                 if let Ok(mut guard) = state.poll_runtime.failure_backoff_secs.lock() {
                     let next = if *guard == 0 {
@@ -225,7 +307,7 @@ pub async fn run_poll_cycle<R: Runtime>(
                     } else {
                         (*guard * 2).min(300)
                     };
-                    *guard = next;
+                    *guard = apply_jitter(next);
                 }
             }
             Err(msg)
