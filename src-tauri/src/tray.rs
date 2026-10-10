@@ -44,15 +44,15 @@ pub fn setup<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
 }
 
 pub fn sync_tray_title<R: Runtime>(app: &tauri::AppHandle<R>) {
-    let title = app
-        .try_state::<crate::state::AppState>()
-        .and_then(|state| state.dashboard.lock().ok())
-        .map(|snapshot| {
-            let tooltip = snapshot.tray_tooltip.clone();
-            (snapshot.tray_title.clone(), tooltip)
-        });
+    let title_tooltip = app.try_state::<crate::state::AppState>().and_then(|state| {
+        state
+            .dashboard
+            .lock()
+            .ok()
+            .map(|snapshot| (snapshot.tray_title.clone(), snapshot.tray_tooltip.clone()))
+    });
 
-    if let Some((title, tooltip)) = title {
+    if let Some((title, tooltip)) = title_tooltip {
         if let Some(tray) = app.tray_by_id("main-tray") {
             let _ = tray.set_title(if title.is_empty() { None } else { Some(title) });
             let _ = tray.set_tooltip(Some(tooltip));
