@@ -1,7 +1,7 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, PhysicalPosition, Position, Rect, Runtime,
+    Manager, PhysicalPosition, PhysicalSize, Position, Rect, Runtime,
 };
 
 const POPOVER_WIDTH: i32 = 400;
@@ -42,8 +42,8 @@ pub fn setup<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
 
 fn position_popover_below_tray<R: Runtime>(window: &tauri::WebviewWindow<R>, rect: &Rect) {
     let scale = window.scale_factor().unwrap_or(1.0);
-    let pos = rect.position.to_physical(scale);
-    let size = rect.size.to_physical(scale);
+    let pos: PhysicalPosition<i32> = rect.position.to_physical(scale);
+    let size: PhysicalSize<i32> = rect.size.to_physical(scale);
     let icon_center_x: f64 = pos.x as f64 + size.width as f64 / 2.0;
     let x = (icon_center_x - POPOVER_WIDTH as f64 / 2.0).round() as i32;
     let y = (pos.y as f64 + size.height as f64).round() as i32;
