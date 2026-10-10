@@ -1,0 +1,109 @@
+{
+  "name": "@springfield/agent-dashboard",
+  "productName": "Agent Dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mac menu-bar dashboard for Cursor cloud agent work across GitHub",
+  "author": {
+    "name": "Bryan Hunt",
+    "email": "bhunt@nvidia.com"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/springfield-tools/agent-dashboard.git"
+  },
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix --fix-suggestions",
+    "prepare": "husky",
+    "test": "yarn test:unit",
+    "test:unit": "vitest run test/unit",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "release": "semantic-release"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.10.1",
+    "@tauri-apps/plugin-opener": "^2.5.5",
+    "vue": "^3.5.43"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "20.4.1",
+    "@commitlint/config-conventional": "20.4.1",
+    "@semantic-release/changelog": "7.0.0",
+    "@semantic-release/exec": "7.1.0",
+    "@semantic-release/git": "11.0.1",
+    "@semantic-release/github": "12.0.10",
+    "@semantic-release/npm": "13.2.0",
+    "@tauri-apps/cli": "^2.11.5",
+    "@types/node": "26.6.2",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "conventional-changelog-conventionalcommits": "9.3.1",
+    "husky": "9.1.7",
+    "oxlint": "1.85.0",
+    "semantic-release": "25.0.9",
+    "typescript": "7.0.2",
+    "vite": "^8.0.16",
+    "vitest": "^5.0.1",
+    "vue-tsc": "^3.3.5"
+  },
+  "resolutions": {
+    "conventional-changelog-conventionalcommits": "9.3.1"
+  },
+  "release": {
+    "branches": [
+      "main",
+      {
+        "name": "beta",
+        "prerelease": true
+      }
+    ],
+    "plugins": [
+      [
+        "@semantic-release/commit-analyzer",
+        {
+          "preset": "conventionalcommits"
+        }
+      ],
+      [
+        "@semantic-release/release-notes-generator",
+        {
+          "preset": "conventionalcommits"
+        }
+      ],
+      "@semantic-release/changelog",
+      [
+        "@semantic-release/npm",
+        {
+          "npmPublish": false
+        }
+      ],
+      [
+        "@semantic-release/exec",
+        {
+          "prepareCmd": "node scripts/set-cargo-version.mjs ${nextRelease.version}",
+          "successCmd": "echo \"v${nextRelease.version}\" > .released-tag"
+        }
+      ],
+      "@semantic-release/github",
+      [
+        "@semantic-release/git",
+        {
+          "assets": [
+            "CHANGELOG.md",
+            "package.json",
+            "src-tauri/Cargo.toml",
+            "src-tauri/Cargo.lock"
+          ],
+          "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
+        }
+      ]
+    ]
+  },
+  "packageManager": "yarn@4.18.0"
+}

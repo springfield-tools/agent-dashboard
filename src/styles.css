@@ -1,0 +1,135 @@
+:root {
+  color-scheme: light dark;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: transparent;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.popover {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  padding: 12px 14px;
+  background: #f5f5f7;
+  color: #1d1d1f;
+}
+
+@media (prefers-color-scheme: dark) {
+  .popover {
+    background: #2c2c2e;
+    color: #f5f5f7;
+  }
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgb(0 0 0 / 12%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .header {
+    border-bottom-color: rgb(255 255 255 / 12%);
+  }
+}
+
+.header-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.header-meta {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.sections {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.section {
+  margin-bottom: 12px;
+}
+
+.section-title {
+  margin: 0 0 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 6px;
+  align-items: baseline;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid rgb(0 0 0 / 8%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 80%);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: default;
+}
+
+@media (prefers-color-scheme: dark) {
+  .row {
+    border-color: rgb(255 255 255 / 10%);
+    background: rgb(0 0 0 / 25%);
+  }
+}
+
+.row-repo {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.row-number {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.row-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgb(0 0 0 / 12%);
+  font-size: 11px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .footer {
+    border-top-color: rgb(255 255 255 / 12%);
+  }
+}
+
+.footer-note {
+  opacity: 0.75;
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Agent Dashboard popover",
+  "windows": ["popover"],
+  "permissions": ["core:default", "opener:default", "log:default"]
+}
