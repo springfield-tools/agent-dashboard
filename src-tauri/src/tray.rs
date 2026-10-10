@@ -1,10 +1,12 @@
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, PhysicalPosition, PhysicalSize, Position, Rect, Runtime,
+    Manager, Monitor, Position, Rect, Runtime, WebviewWindow,
 };
 
-const POPOVER_WIDTH: i32 = 400;
+use crate::popover_anchor::{
+    logical_position_tauri, physical_tray_rect, popover_logical_position, PhysicalTrayRect,
+};
 
 pub fn setup<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -40,15 +42,51 @@ pub fn setup<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
-fn position_popover_below_tray<R: Runtime>(window: &tauri::WebviewWindow<R>, rect: &Rect) {
-    let scale = window.scale_factor().unwrap_or(1.0);
-    let pos: PhysicalPosition<i32> = rect.position.to_physical(scale);
-    let size: PhysicalSize<i32> = rect.size.to_physical(scale);
-    let icon_center_x: f64 = pos.x as f64 + size.width as f64 / 2.0;
-    let x = (icon_center_x - POPOVER_WIDTH as f64 / 2.0).round() as i32;
-    let y = (pos.y as f64 + size.height as f64).round() as i32;
+fn monitor_for_tray<R: Runtime>(
+    window: &WebviewWindow<R>,
+    tray: &PhysicalTrayRect,
+) -> Option<Monitor> {
+    let center_x = tray.x as f64 + tray.width as f64 / 2.0;
+    let center_y = tray.y as f64 + tray.height as f64 / 2.0;
 
-    let _ = window.set_position(Position::Physical(PhysicalPosition::new(x, y)));
+    if let Ok(Some(monitor)) = window.monitor_from_point(center_x, center_y) {
+        return Some(monitor);
+    }
+
+    if let Ok(monitors) = window.available_monitors() {
+        for monitor in monitors {
+            let pos = monitor.position();
+            let size = monitor.size();
+            let left = pos.x as f64;
+            let top = pos.y as f64;
+            let right = left + size.width as f64;
+            let bottom = top + size.height as f64;
+            if center_x >= left && center_x < right && center_y >= top && center_y < bottom {
+                return Some(monitor);
+            }
+        }
+    }
+
+    window.primary_monitor().ok().flatten()
+}
+
+fn position_popover_below_tray<R: Runtime>(window: &WebviewWindow<R>, rect: &Rect) {
+    let tray = physical_tray_rect(rect, 1.0);
+    let Some(monitor) = monitor_for_tray(window, &tray) else {
+        return;
+    };
+
+    let work_area = monitor.work_area();
+    let work = crate::popover_anchor::MonitorWorkAreaPhysical {
+        x: work_area.position.x,
+        y: work_area.position.y,
+        width: work_area.size.width,
+        height: work_area.size.height,
+        scale_factor: monitor.scale_factor(),
+    };
+
+    let logical = popover_logical_position(tray, work);
+    let _ = window.set_position(Position::Logical(logical_position_tauri(logical)));
 }
 
 fn toggle_popover<R: Runtime>(app: &tauri::AppHandle<R>, tray_rect: Option<Rect>) {

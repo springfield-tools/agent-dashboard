@@ -1,4 +1,5 @@
 mod groups;
+mod popover_anchor;
 
 #[cfg(target_os = "macos")]
 mod tray;
