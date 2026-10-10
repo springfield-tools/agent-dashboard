@@ -9,6 +9,7 @@ use crate::popover_anchor::{
 };
 
 pub fn setup<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
+    sync_tray_title(app);
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&quit])?;
 
@@ -40,6 +41,23 @@ pub fn setup<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     }
 
     Ok(())
+}
+
+pub fn sync_tray_title<R: Runtime>(app: &tauri::AppHandle<R>) {
+    let title = app
+        .try_state::<crate::state::AppState>()
+        .and_then(|state| state.dashboard.lock().ok())
+        .map(|snapshot| {
+            let tooltip = snapshot.tray_tooltip.clone();
+            (snapshot.tray_title.clone(), tooltip)
+        });
+
+    if let Some((title, tooltip)) = title {
+        if let Some(tray) = app.tray_by_id("main-tray") {
+            let _ = tray.set_title(if title.is_empty() { None } else { Some(title) });
+            let _ = tray.set_tooltip(Some(tooltip));
+        }
+    }
 }
 
 fn monitor_for_tray<R: Runtime>(

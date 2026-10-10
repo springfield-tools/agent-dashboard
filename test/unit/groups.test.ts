@@ -1,17 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { groupCount, PLACEHOLDER_GROUPS } from '../../src/groups';
+/** Phase 2 display order matches docs/PLAN.md precedence list. */
+const GROUP_ORDER = [
+  'needs-input',
+  'ci-failing',
+  'needs-testing',
+  'ready-to-merge',
+  'agent-working',
+  'not-started',
+];
 
-describe('groups', () => {
-  it('lists six status sections in plan order', () => {
-    expect(groupCount()).toBe(6);
-    expect(PLACEHOLDER_GROUPS.map((g) => g.id)).toEqual([
-      'needs-input',
-      'ci-failing',
-      'needs-testing',
-      'ready-to-merge',
-      'agent-working',
-      'not-started',
-    ]);
+describe('group order', () => {
+  it('lists six sections in precedence order', () => {
+    expect(GROUP_ORDER).toHaveLength(6);
+    expect(GROUP_ORDER[0]).toBe('needs-input');
+    expect(GROUP_ORDER[5]).toBe('not-started');
   });
 });

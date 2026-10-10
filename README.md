@@ -8,6 +8,8 @@ The implementation plan is in [`docs/PLAN.md`](docs/PLAN.md). Accepted architect
 
 Node.js 26 (see `.nvmrc`) and Yarn 4 via Corepack. Rust **1.90 or newer** (see `rust-version` in `src-tauri/Cargo.toml`; the locked `tray-icon` crate requires 1.90) and [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) are required on macOS.
 
+Runtime config is written on first launch to `~/Library/Application Support/com.springfield.agent-dashboard/config.toml`. See [`config.example.toml`](config.example.toml). Phase 2 loads the checked-in GraphQL-shaped fixture (`src-tauri/fixtures/ham-radio-open.json`); live polling arrives in Phase 3.
+
 ```bash
 cd ~/Development/springfield-tools/agent-dashboard
 corepack enable

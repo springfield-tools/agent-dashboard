@@ -1,0 +1,38 @@
+# Copy to ~/Library/Application Support/com.springfield.agent-dashboard/config.toml
+# (the app writes this file with defaults on first launch).
+
+# Also edited from the popover presets (15s, 30s, 1m, 2m) in Phase 3+.
+# Allowed range is 15 to 900 seconds (15 minutes). Default 30.
+poll_interval_seconds = 30
+
+# Written by Pause / Resume in Phase 3+. Omit the key, or set "running", to poll.
+# poll_pause = "manual"
+
+pause_when_idle = false
+idle_pause_after_seconds = 300
+
+use_etag_probe = false
+ci_max_staleness_seconds = 30
+
+[github]
+credential = "keychain"
+
+[filters]
+# hide | collapse | show
+bots = "collapse"
+bot_logins = ["dependabot[bot]", "renovate[bot]"]
+surface_failing_bots = true
+
+[tray]
+counts = ["needs-input", "needs-testing", "ci-failing", "ready-to-merge"]
+
+[labels]
+agent_working = "agent-working"
+needs_testing = "needs-testing"
+needs_input = "needs-input"
+ready_to_merge = "ready-to-merge"
+
+[[orgs]]
+name = "springfield-ham-radio"
+include = []
+exclude = []
