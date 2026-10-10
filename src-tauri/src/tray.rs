@@ -15,6 +15,16 @@ use crate::popover_anchor::{
 use crate::poll::{run_poll_cycle, update_config_and_save};
 use crate::state::AppState;
 
+fn tray_pause_info<R: Runtime>(app: &tauri::AppHandle<R>) -> (bool, String) {
+    if let Some(state) = app.try_state::<Arc<AppState>>() {
+        if let Ok(guard) = state.config.lock() {
+            let paused = is_polling_paused(&guard.poll_pause);
+            return (paused, pause_tooltip(&guard.poll_pause));
+        }
+    }
+    (false, "Polling".to_string())
+}
+
 const ICON_NORMAL: Image<'_> = tauri::include_image!("icons/tray-template.png");
 const ICON_PAUSED: Image<'_> = tauri::include_image!("icons/tray-pause-template.png");
 
@@ -159,21 +169,12 @@ pub fn trigger_refresh<R: Runtime>(app: &tauri::AppHandle<R>, force: bool) {
 
 pub fn sync_tray_from_snapshot<R: Runtime>(app: &tauri::AppHandle<R>, snapshot: &DashboardSnapshot) {
     if let Some(tray) = app.tray_by_id("main-tray") {
-        let paused = app
-            .try_state::<Arc<AppState>>()
-            .and_then(|s| s.config.lock().ok())
-            .map(|c| is_polling_paused(&c.poll_pause))
-            .unwrap_or(false);
+        let (paused, pause_tip) = tray_pause_info(app);
         if paused {
             let _ = tray.set_icon(Some(ICON_PAUSED.clone()));
             let _ = tray.set_icon_as_template(true);
             let _ = tray.set_title(Some("Paused"));
-            let tooltip = app
-                .try_state::<Arc<AppState>>()
-                .and_then(|s| s.config.lock().ok())
-                .map(|c| pause_tooltip(&c.poll_pause))
-                .unwrap_or_else(|| "Polling paused".to_string());
-            let _ = tray.set_tooltip(Some(tooltip));
+            let _ = tray.set_tooltip(Some(pause_tip));
         } else {
             let _ = tray.set_icon(Some(ICON_NORMAL.clone()));
             let _ = tray.set_icon_as_template(true);
@@ -193,12 +194,8 @@ pub fn sync_tray_paused<R: Runtime>(app: &tauri::AppHandle<R>, paused: bool) {
             let _ = tray.set_icon(Some(ICON_PAUSED.clone()));
             let _ = tray.set_icon_as_template(true);
             let _ = tray.set_title(Some("Paused"));
-            let tooltip = app
-                .try_state::<Arc<AppState>>()
-                .and_then(|s| s.config.lock().ok())
-                .map(|c| pause_tooltip(&c.poll_pause))
-                .unwrap_or_else(|| "Polling paused".to_string());
-            let _ = tray.set_tooltip(Some(tooltip));
+            let (_, pause_tip) = tray_pause_info(app);
+            let _ = tray.set_tooltip(Some(pause_tip));
         } else if let Some(state) = app.try_state::<Arc<AppState>>() {
             if let Ok(guard) = state.dashboard.lock() {
                 sync_tray_from_snapshot(app, &guard);

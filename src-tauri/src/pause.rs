@@ -34,12 +34,10 @@ pub fn pause_until_tomorrow_local_value() -> String {
 
 /// Clears a timed pause that has expired. Returns true when the config was changed.
 pub fn clear_expired_timed_pause(poll_pause: &mut Option<String>) -> bool {
-    match poll_pause {
-        None | Some(m) if m.as_str() == "manual" || m.as_str() == "running" => false,
+    match poll_pause.as_deref() {
+        None | Some("manual") | Some("running") => false,
+        Some(_) if is_polling_paused(poll_pause) => false,
         Some(_) => {
-            if is_polling_paused(poll_pause) {
-                return false;
-            }
             *poll_pause = None;
             true
         }

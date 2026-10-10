@@ -51,7 +51,7 @@ pub fn delete_token() -> Result<(), KeychainError> {
     {
         use keyring::Entry;
         let entry = Entry::new(SERVICE, ACCOUNT).map_err(|e| KeychainError::Message(e.to_string()))?;
-        match entry.delete_password() {
+        match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(KeychainError::Message(e.to_string())),
         }

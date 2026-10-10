@@ -144,7 +144,7 @@ fn resume_polling(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Res
 }
 
 #[tauri::command]
-fn refresh_now(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+fn refresh_now(app: AppHandle, _state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     tray::trigger_refresh(&app, true);
     #[cfg(not(target_os = "macos"))]

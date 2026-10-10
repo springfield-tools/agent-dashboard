@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::Utc;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::Notify;
 
 use crate::config::{save_config, AppConfig};
@@ -105,8 +105,8 @@ pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<
     });
 }
 
-pub async fn run_poll_cycle(
-    app: &AppHandle,
+pub async fn run_poll_cycle<R: Runtime>(
+    app: &AppHandle<R>,
     state: &Arc<AppState>,
     client: &reqwest::Client,
     force: bool,
