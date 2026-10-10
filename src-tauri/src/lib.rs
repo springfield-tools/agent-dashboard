@@ -34,7 +34,7 @@ pub fn run() {
     #[cfg(target_os = "macos")]
     {
         builder = builder.setup(|app| {
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory)?;
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             tray::setup(app.handle())?;
             Ok(())
         });
