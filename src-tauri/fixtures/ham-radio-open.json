@@ -515,45 +515,6 @@
       "isDraft": true,
       "labels": [],
       "ci": null
-    },
-    {
-      "kind": "pr",
-      "org": "springfield-ham-radio",
-      "repo": "ham-radio-api",
-      "number": 501,
-      "title": "feat: needs testing but red CI",
-      "url": "https://github.com/springfield-ham-radio/ham-radio-api/pull/501",
-      "author": "BryanHunt",
-      "updatedAt": "2026-10-10T18:00:00Z",
-      "isDraft": false,
-      "labels": [
-        "needs-testing"
-      ],
-      "ci": {
-        "state": "FAILURE",
-        "failedChecks": [
-          "build"
-        ]
-      }
-    },
-    {
-      "kind": "pr",
-      "org": "springfield-ham-radio",
-      "repo": "ham-radio-utils",
-      "number": 502,
-      "title": "fix: blocked on Bryan",
-      "url": "https://github.com/springfield-ham-radio/ham-radio-utils/pull/502",
-      "author": "BryanHunt",
-      "updatedAt": "2026-10-10T17:00:00Z",
-      "isDraft": false,
-      "labels": [
-        "needs-input",
-        "agent-working"
-      ],
-      "ci": {
-        "state": "SUCCESS",
-        "failedChecks": []
-      }
     }
   ]
 }

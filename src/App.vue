@@ -48,7 +48,7 @@
         Dependabot · {{ snapshot.bots.green }} green · {{ snapshot.bots.noCi }} no CI
       </button>
       <span class="footer-note">
-        Phase 2 · fixture data · edit labels or filters.bots in config and restart
+        Phase 2 · 33-PR fixture · edit labels or filters.bots in config and restart
       </span>
       <span v-if="configStatus" class="footer-path">{{ configStatus.configPath }}</span>
     </footer>
