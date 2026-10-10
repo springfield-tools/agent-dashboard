@@ -324,7 +324,8 @@ mod tests {
 
     #[test]
     fn first_launch_template_is_example_toml() {
-        assert!(example_config_text().contains("filters.bots"));
+        assert!(example_config_text().contains("[filters]"));
+        assert!(example_config_text().contains("bots = \"collapse\""));
         assert!(example_config_text().contains("# hide | collapse | show"));
     }
 }
