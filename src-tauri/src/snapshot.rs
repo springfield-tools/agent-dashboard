@@ -1,20 +1,8 @@
 use std::fs;
 use std::path::Path;
 
-use serde::Serialize;
-
 use crate::config::write_file_atomic;
-use crate::model::{BotFooter, DashboardGroup, DashboardSnapshot};
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SnapshotFile {
-    schema_version: u32,
-    fetched_at: String,
-    stale: bool,
-    groups: Vec<DashboardGroup>,
-    bots: Option<BotFooter>,
-}
+use crate::model::DashboardSnapshot;
 
 pub fn load_snapshot_file(path: &Path) -> Option<DashboardSnapshot> {
     if !path.exists() {
@@ -25,14 +13,7 @@ pub fn load_snapshot_file(path: &Path) -> Option<DashboardSnapshot> {
 }
 
 pub fn write_snapshot_file(path: &Path, snapshot: &DashboardSnapshot) -> Result<(), String> {
-    let file = SnapshotFile {
-        schema_version: snapshot.schema_version,
-        fetched_at: snapshot.fetched_at.clone(),
-        stale: snapshot.stale,
-        groups: snapshot.groups.clone(),
-        bots: snapshot.bots.clone(),
-    };
-    let json = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(snapshot).map_err(|e| e.to_string())?;
     write_file_atomic(path, &json)?;
     #[cfg(unix)]
     {
