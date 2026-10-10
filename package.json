@@ -24,6 +24,7 @@
     "test:unit": "vitest run test/unit",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
+    "tauri:dev:fixture": "tauri dev -- --fixture",
     "tauri:build": "tauri build",
     "release": "semantic-release"
   },

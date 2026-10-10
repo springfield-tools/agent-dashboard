@@ -97,6 +97,7 @@ pub struct BotFooter {
     #[serde(rename = "noCi")]
     pub no_ci: u32,
     pub failing: u32,
+    pub pending: u32,
     pub search_url: String,
 }
 
@@ -268,6 +269,7 @@ pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str
     let mut bot_green = 0u32;
     let mut bot_no_ci = 0u32;
     let mut bot_failing = 0u32;
+    let mut bot_pending = 0u32;
 
     let mut buckets: Vec<Vec<DashboardRow>> = vec![vec![]; GROUP_IDS.len()];
 
@@ -293,6 +295,7 @@ pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str
                             Some("SUCCESS") => bot_green += 1,
                             None => bot_no_ci += 1,
                             Some("FAILURE") | Some("ERROR") => bot_failing += 1,
+                            Some("PENDING") => bot_pending += 1,
                             _ => {}
                         }
                     }
@@ -328,7 +331,9 @@ pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str
         tray_tooltip()
     };
 
-    let bots = if bot_mode == BotFilterMode::Collapse && (bot_green > 0 || bot_no_ci > 0 || bot_failing > 0) {
+    let bots = if bot_mode == BotFilterMode::Collapse
+        && (bot_green > 0 || bot_no_ci > 0 || bot_failing > 0 || bot_pending > 0)
+    {
         let org = config
             .orgs
             .first()
@@ -339,6 +344,7 @@ pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str
             green: bot_green,
             no_ci: bot_no_ci,
             failing: bot_failing,
+            pending: bot_pending,
             search_url: bot_search_url(org),
         })
     } else {
@@ -609,6 +615,32 @@ mod tests {
         assert!(snapshot.groups.is_empty());
         let bots = snapshot.bots.expect("footer");
         assert_eq!(bots.failing, 1);
+        assert_eq!(bots.green, 0);
+    }
+
+    #[test]
+    fn collapse_counts_pending_bots_in_footer() {
+        let mut config = AppConfig::default();
+        config.filters.bots = BotFilterMode::Collapse;
+        let item = RawItem {
+            kind: ItemKind::Pr,
+            org: "springfield-ham-radio".to_string(),
+            repo: "ham-radio-docs".to_string(),
+            number: 9,
+            title: "bot pending".to_string(),
+            url: "https://example.com".to_string(),
+            author: "dependabot[bot]".to_string(),
+            updated_at: "2026-10-10T12:00:00Z".to_string(),
+            is_draft: false,
+            labels: vec![],
+            ci: Some(CiSnapshot {
+                state: Some("PENDING".to_string()),
+                failed_checks: vec![],
+            }),
+        };
+        let snapshot = build_dashboard(vec![item], &config, "now");
+        let bots = snapshot.bots.expect("footer");
+        assert_eq!(bots.pending, 1);
         assert_eq!(bots.green, 0);
     }
 

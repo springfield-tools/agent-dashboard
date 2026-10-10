@@ -165,6 +165,9 @@ impl Default for TrayConfig {
 pub struct AppConfig {
     #[serde(default = "default_poll_interval")]
     pub poll_interval_seconds: u64,
+    /// `"manual"` or an RFC3339 timestamp when polling resumes.
+    #[serde(default)]
+    pub poll_pause: Option<String>,
     #[serde(default)]
     pub pause_when_idle: bool,
     #[serde(default = "default_idle_pause")]
@@ -209,6 +212,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             poll_interval_seconds: DEFAULT_POLL_INTERVAL,
+            poll_pause: None,
             pause_when_idle: false,
             idle_pause_after_seconds: 300,
             use_etag_probe: false,
@@ -270,12 +274,7 @@ pub fn is_config_missing_or_blank(path: &Path) -> bool {
     }
 }
 
-/// Write the commented example to `path` via a temp file in the same directory, then rename.
-pub fn write_example_config_atomic(path: &Path) -> Result<(), String> {
-    let content = example_config_text();
-    if content.trim().is_empty() {
-        return Err("embedded example config is empty".to_string());
-    }
+pub fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create config dir: {e}"))?;
     }
@@ -284,12 +283,21 @@ pub fn write_example_config_atomic(path: &Path) -> Result<(), String> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "config.toml".to_string());
     let temp_path = path.with_file_name(format!(".{file_name}.tmp"));
-    fs::write(&temp_path, content).map_err(|e| format!("write temp config: {e}"))?;
+    fs::write(&temp_path, content).map_err(|e| format!("write temp file: {e}"))?;
     fs::rename(&temp_path, path).map_err(|e| {
         let _ = fs::remove_file(&temp_path);
-        format!("rename config into place: {e}")
+        format!("rename into place: {e}")
     })?;
     Ok(())
+}
+
+/// Write the commented example to `path` via a temp file in the same directory, then rename.
+pub fn write_example_config_atomic(path: &Path) -> Result<(), String> {
+    let content = example_config_text();
+    if content.trim().is_empty() {
+        return Err("embedded example config is empty".to_string());
+    }
+    write_file_atomic(path, content)
 }
 
 fn seed_default_config_file(path: &Path) -> (AppConfig, Option<String>) {
@@ -331,6 +339,12 @@ pub fn load_config(path: &Path) -> (AppConfig, Option<String>) {
 
 pub fn example_config_text() -> &'static str {
     include_str!("../../config.example.toml")
+}
+
+pub fn save_config(path: &Path, config: &AppConfig) -> Result<(), String> {
+    validate_poll_interval(config.poll_interval_seconds)?;
+    let text = toml::to_string_pretty(config).map_err(|e| e.to_string())?;
+    write_file_atomic(path, &text)
 }
 
 #[cfg(test)]
@@ -389,6 +403,21 @@ mod tests {
         assert!(written.contains("bots = \"collapse\""));
         assert!(!written.trim().is_empty());
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn round_trips_poll_pause() {
+        let dir = std::env::temp_dir().join("agent-dashboard-config-pause-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("tmpdir");
+        let path = dir.join("config.toml");
+        let mut config = AppConfig::default();
+        config.poll_pause = Some("manual".to_string());
+        save_config(&path, &config).expect("save");
+        let (loaded, err) = load_config(&path);
+        assert!(err.is_none());
+        assert_eq!(loaded.poll_pause.as_deref(), Some("manual"));
         let _ = fs::remove_dir_all(&dir);
     }
 
