@@ -195,7 +195,9 @@ pub async fn run_poll_cycle<R: Runtime>(
         if let Some(rl) = fetch.rate_limit {
             if rl.remaining < 500 {
                 state.set_banner(Some(format!(
-                    "GraphQL budget low ({rl.remaining} remaining until {rl.reset_at})"
+                    "GraphQL budget low ({} remaining until {})",
+                    rl.remaining,
+                    rl.reset_at
                 )));
             }
         }

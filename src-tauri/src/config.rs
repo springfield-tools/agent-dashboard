@@ -342,7 +342,7 @@ pub fn example_config_text() -> &'static str {
 }
 
 pub fn save_config(path: &Path, config: &AppConfig) -> Result<(), String> {
-    validate_poll_interval(config.poll_interval_seconds)?;
+    validate_poll_interval(config.poll_interval_seconds).map_err(|e| e.to_string())?;
     let text = toml::to_string_pretty(config).map_err(|e| e.to_string())?;
     write_file_atomic(path, &text)
 }
