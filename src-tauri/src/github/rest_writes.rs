@@ -444,25 +444,7 @@ mod tests {
         let owner = "ham";
         let repo = "repo";
         let number = 5u32;
-
-        let write_comment = server.mock(|when, then| {
-            when.method(POST)
-                .path(format!("/repos/{owner}/{repo}/issues/{number}/comments"));
-            then.status(201)
-                .json_body(serde_json::json!({ "id": 42 }));
-        });
-        let write_remove_needs_testing = server.mock(|when, then| {
-            when.method(DELETE)
-                .path(format!(
-                    "/repos/{owner}/{repo}/issues/{number}/labels/needs-testing"
-                ));
-            then.status(200);
-        });
-        let write_add_ready = server.mock(|when, then| {
-            when.method(POST)
-                .path(format!("/repos/{owner}/{repo}/issues/{number}/labels"));
-            then.status(200);
-        });
+        let issue_path = format!("/repos/{owner}/{repo}/issues/{number}");
 
         let client = Client::builder().build().unwrap();
         let token = "tok";
@@ -492,10 +474,16 @@ mod tests {
             &row.labels,
             &labels,
         );
-        assert_eq!(write_remove, vec!["needs-testing"]);
-        assert_eq!(write_add, vec!["ready-to-merge"]);
+        assert_eq!(write_remove, vec!["needs-testing".to_string()]);
+        assert_eq!(write_add, vec!["ready-to-merge".to_string()]);
 
         let body = "Testing passed. Ready to merge.\n\n— Agent Dashboard";
+
+        let write_comment = server.mock(|when, then| {
+            when.method(POST).path(format!("{issue_path}/comments"));
+            then.status(201)
+                .json_body(serde_json::json!({ "id": 42 }));
+        });
         let comment_id = post_issue_comment_at(
             &client,
             &base,
@@ -508,6 +496,17 @@ mod tests {
         .await
         .expect("write comment");
         assert_eq!(comment_id, 42);
+        write_comment.assert();
+
+        let write_remove_needs_testing = server.mock(|when, then| {
+            when.method(DELETE)
+                .path(format!("{issue_path}/labels/needs-testing"));
+            then.status(200);
+        });
+        let write_add_ready = server.mock(|when, then| {
+            when.method(POST).path(format!("{issue_path}/labels"));
+            then.status(200);
+        });
         apply_label_diff_at(
             &client,
             &base,
@@ -520,7 +519,6 @@ mod tests {
         )
         .await
         .expect("write labels");
-        write_comment.assert();
         write_remove_needs_testing.assert();
         write_add_ready.assert();
 
@@ -541,14 +539,11 @@ mod tests {
 
         let undo_remove_ready = server.mock(|when, then| {
             when.method(DELETE)
-                .path(format!(
-                    "/repos/{owner}/{repo}/issues/{number}/labels/ready-to-merge"
-                ));
+                .path(format!("{issue_path}/labels/ready-to-merge"));
             then.status(200);
         });
         let undo_add_needs_testing = server.mock(|when, then| {
-            when.method(POST)
-                .path(format!("/repos/{owner}/{repo}/issues/{number}/labels"));
+            when.method(POST).path(format!("{issue_path}/labels"));
             then.status(200);
         });
         let undo_delete_comment = server.mock(|when, then| {
