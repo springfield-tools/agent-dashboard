@@ -4,6 +4,10 @@ A Mac menu-bar dashboard for tracking Cursor cloud agent work across GitHub repo
 
 The implementation plan is in [`docs/PLAN.md`](docs/PLAN.md). Accepted architecture decisions are in [`docs/adr/`](docs/adr/). A separate daily morning summary lives outside this repo; the plan describes the snapshot file it can read.
 
+## Downloads
+
+macOS (Apple Silicon) builds are on [GitHub Releases](https://github.com/springfield-tools/agent-dashboard/releases). Packaged builds are **unsigned** (open the `.dmg`, then right-click the app → **Open** if Gatekeeper blocks). For development from source, use the checkout at `~/Development/springfield-tools/agent-dashboard`.
+
 ## Development
 
 Node.js 26 (see `.nvmrc`) and Yarn 4 via Corepack. Rust **1.90 or newer** (see `rust-version` in `src-tauri/Cargo.toml`; the locked `tray-icon` crate requires 1.90) and [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) are required on macOS.
@@ -37,8 +41,6 @@ yarn lint
 yarn test
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
-
-Packaged macOS builds are **unsigned** in early phases (right-click → Open if Gatekeeper blocks).
 
 ## License
 

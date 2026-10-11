@@ -12,3 +12,4 @@ Accepted decisions for Agent Dashboard. Bryan approved `docs/PLAN.md`; where ope
 | [0006](0006-poll-hardening-phase-4.md) | Wake, idle pause, ETag probe, brakes/backoff |
 | [0007](0007-row-write-actions-phase-5.md) | Phase 5 row actions, `@cursor` comments, undo |
 | [0008](0008-multi-org-credentials-and-grouping.md) | Per-org Keychain PATs, org sections, chip variants |
+| [0009](0009-release-pipeline-and-github-app.md) | semantic-release, macOS tauri-action publish, dedicated release GitHub App |
