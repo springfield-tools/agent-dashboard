@@ -69,6 +69,34 @@ export type ConfigStatus = {
 /** Matches `DEFAULT_POLL_INTERVAL` in `src-tauri/src/config.rs`. */
 export const DEFAULT_POLL_INTERVAL_SECONDS = 60;
 
+export type RowActionKind =
+  | 'testingPassedReady'
+  | 'testingPassedHandBack'
+  | 'sendBackToAgent'
+  | 'answer'
+  | 'approveReadyToMerge';
+
+export type RowActionPreview = {
+  action: RowActionKind;
+  labelsToAdd: string[];
+  labelsToRemove: string[];
+  commentBody: string;
+  wakesAgent: boolean;
+  noteRequired: boolean;
+  defaultNote: string;
+};
+
+export type WriteUiState = {
+  pendingKeys: string[];
+  undoAvailable: boolean;
+  undoMessage: string | null;
+  partialFailure: {
+    kind: 'retryLabels';
+    message: string;
+  } | null;
+  toast: string | null;
+};
+
 export const POLL_INTERVAL_PRESETS = [
   { label: '15s', seconds: 15 },
   { label: '30s', seconds: 30 },

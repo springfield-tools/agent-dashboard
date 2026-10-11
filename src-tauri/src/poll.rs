@@ -35,6 +35,10 @@ pub struct PollRuntime {
 }
 
 impl PollRuntime {
+    pub(crate) fn gh_token_cache(&self) -> &Mutex<Option<String>> {
+        &self.gh_token_cache
+    }
+
     pub fn new() -> Self {
         Self {
             wake: Notify::new(),
@@ -545,6 +549,9 @@ pub async fn run_poll_cycle<R: Runtime>(
             poll_remaining,
         );
         state.set_dashboard(snapshot.clone());
+        if let Ok(mut write) = state.write_state.lock() {
+            write.reconcile_poll(&fetched_at);
+        }
         #[cfg(target_os = "macos")]
         tray::sync_tray_from_snapshot(app, &snapshot);
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="popover">
+  <div ref="popoverEl" class="popover">
     <header class="header">
       <div class="header-row">
         <span class="header-title">Agent Dashboard</span>
@@ -29,7 +29,9 @@
       <p v-else-if="configStatus?.pollingPaused" class="banner banner-info">
         {{ configStatus.pauseTooltip }}
       </p>
+      <p v-else-if="actionBanner" class="banner banner-warn">{{ actionBanner }}</p>
       <p v-else-if="configStatus?.banner" class="banner banner-warn">{{ configStatus.banner }}</p>
+      <p v-if="writeUi?.toast" class="banner banner-info">{{ writeUi.toast }}</p>
       <div v-if="!configStatus?.fixtureMode" class="controls">
         <label class="control-label">
           Poll
@@ -61,31 +63,190 @@
     <main class="sections">
       <section v-for="group in snapshot?.groups ?? []" :key="group.id" class="section">
         <h2 class="section-title">{{ group.title }} · {{ group.items.length }}</h2>
-        <button
+        <div
           v-for="row in group.items"
           :key="`${row.repo}-${row.number}`"
-          type="button"
-          class="row row-button"
-          @click="openRow(row.url)"
+          class="row"
+          @contextmenu.prevent="onRowContextMenu($event, group.id, row)"
         >
-          <span class="row-top">
-            <span class="row-repo">{{ row.repo }}</span>
-            <span class="row-number">#{{ row.number }}</span>
-            <span v-if="row.draft" class="chip chip-kind">Draft</span>
-            <span v-else class="chip chip-kind">{{ row.kind === 'pr' ? 'PR' : 'Issue' }}</span>
-          </span>
-          <span class="row-title">{{ row.title }}</span>
-          <span class="row-meta">
-            <span class="row-author">@{{ row.author }}</span>
-            <span class="row-time">{{ formatRelativeTime(row.updatedAt) }}</span>
-          </span>
-          <span v-if="row.chips.length" class="row-chips">
-            <span v-for="chip in row.chips" :key="chip.label" class="chip">{{ chip.label }}</span>
-          </span>
-        </button>
+          <div class="row-surface">
+            <button type="button" class="row-button" @click="openRow(row.url)">
+              <span class="row-top">
+                <span class="row-top-meta">
+                  <span class="row-repo">{{ row.repo }}</span>
+                  <span class="row-number">#{{ row.number }}</span>
+                  <span v-if="row.draft" class="chip chip-kind">Draft</span>
+                  <span v-else class="chip chip-kind">{{ row.kind === 'pr' ? 'PR' : 'Issue' }}</span>
+                </span>
+              </span>
+              <span class="row-title">{{ row.title }}</span>
+              <span class="row-meta">
+                <span class="row-author">@{{ row.author }}</span>
+                <span class="row-time">{{ formatRelativeTime(row.updatedAt) }}</span>
+              </span>
+              <span v-if="row.chips.length" class="row-chips">
+                <span v-for="chip in row.chips" :key="chip.label" class="chip">{{ chip.label }}</span>
+              </span>
+            </button>
+            <button
+              v-if="!configStatus?.fixtureMode && rowMenuEntries(group.id).length"
+              type="button"
+              class="row-more"
+              :aria-label="`Actions for ${row.repo} #${row.number}`"
+              aria-haspopup="menu"
+              :aria-expanded="isContextMenuForRow(group.id, row)"
+              @click.stop="openContextMenu($event, group.id, row)"
+            >
+              ⋯
+            </button>
+          </div>
+        </div>
       </section>
       <p v-if="!snapshot?.groups.length" class="empty">No open items in this view.</p>
     </main>
+    <div v-if="writeUi?.undoAvailable" class="undo-bar">
+      <button type="button" class="btn-text" @click="onUndo">Undo last action</button>
+      <span v-if="writeUi.undoMessage" class="undo-hint">{{ writeUi.undoMessage }}</span>
+    </div>
+    <div v-if="writeUi?.partialFailure" class="undo-bar">
+      <button type="button" class="btn-text" @click="onRetryPartial">
+        Retry labels
+      </button>
+      <span class="undo-hint">{{ writeUi.partialFailure.message }}</span>
+    </div>
+
+    <div
+      v-if="contextMenu"
+      class="context-menu-backdrop"
+      aria-hidden="true"
+      @click="closeContextMenu"
+      @contextmenu.prevent="closeContextMenu"
+    />
+    <div
+      v-if="contextMenu"
+      ref="contextMenuEl"
+      class="context-menu"
+      role="menu"
+      :style="contextMenuStyle"
+      @keydown.escape.prevent="closeContextMenu"
+    >
+      <button
+        v-for="(entry, index) in rowMenuEntries(contextMenu.groupId)"
+        :key="entry.label"
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        :tabindex="index === 0 ? 0 : -1"
+        @click="pickContextMenuAction(entry)"
+      >
+        {{ entry.label }}
+      </button>
+    </div>
+
+    <div
+      v-if="actionSheetOpen"
+      class="action-sheet-overlay"
+      @click.self="closeActionSheet"
+    >
+      <div
+        ref="actionSheetEl"
+        class="action-sheet"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="actionSheetTitleId"
+        @keydown.escape.prevent="closeActionSheet"
+      >
+        <h2 :id="actionSheetTitleId" class="settings-title">{{ actionSheetTitle }}</h2>
+        <p v-if="actionTarget" class="action-target">
+          {{ actionTarget.row.repo }}#{{ actionTarget.row.number }} · {{ actionTarget.row.title }}
+        </p>
+        <div v-if="actionPreview" class="action-diff">
+          <span class="action-diff-label">Labels</span>
+          <span class="row-chips action-diff-chips">
+            <span
+              v-for="name in actionPreview.labelsToRemove"
+              :key="`rm-${name}`"
+              class="chip chip-label-remove"
+            >
+              − {{ name }}
+            </span>
+            <span
+              v-for="name in actionPreview.labelsToAdd"
+              :key="`add-${name}`"
+              class="chip chip-label-add"
+            >
+              + {{ name }}
+            </span>
+          </span>
+        </div>
+        <pre v-if="actionPreview" class="action-comment">{{ actionPreview.commentBody }}</pre>
+        <div v-if="actionSheetMode === 'testingPassed'" class="testing-passed-choice">
+          <label class="control-label">
+            <input
+              v-model="testingPassedChoice"
+              type="radio"
+              value="testingPassedReady"
+              @change="onTestingPassedChoiceChange"
+            />
+            Ready to merge
+          </label>
+          <label class="control-label">
+            <input
+              v-model="testingPassedChoice"
+              type="radio"
+              value="testingPassedHandBack"
+              @change="onTestingPassedChoiceChange"
+            />
+            Hand back to agent
+          </label>
+        </div>
+        <label v-if="actionNeedsNote" class="settings-label">
+          Answer
+          <textarea
+            v-model="actionNote"
+            class="settings-input action-note"
+            rows="3"
+            @input="onActionNoteInput"
+          />
+        </label>
+        <label v-else-if="showOptionalNote" class="settings-label">
+          Optional note
+          <textarea
+            v-model="actionNote"
+            class="settings-input action-note"
+            rows="2"
+            @input="onActionNoteInput"
+          />
+        </label>
+        <p v-if="actionError" class="banner banner-error">{{ actionError }}</p>
+        <div class="action-sheet-footer">
+          <template v-if="actionSheetMode === 'testingPassed'">
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="actionBusy"
+              @click="confirmAction(testingPassedChoice)"
+            >
+              Confirm
+            </button>
+          </template>
+          <template v-else>
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="actionBusy"
+              @click="confirmAction(actionSheetMode as RowActionKind)"
+            >
+              Confirm
+            </button>
+          </template>
+          <button type="button" class="btn-text" :disabled="actionBusy" @click="closeActionSheet">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+
     <footer class="footer">
       <button
         v-if="snapshot?.bots"
@@ -117,8 +278,9 @@
         </p>
         <template v-else>
           <p class="settings-hint">
-            Fine-grained PAT for resource owner springfield-ham-radio: Metadata, Issues, Pull
-            requests, and Commit statuses (Read). No Checks permission on fine-grained tokens. Org
+            Fine-grained PAT for resource owner springfield-ham-radio: Metadata and Commit
+            statuses (Read). Row actions need Issues and Pull requests <strong>Read and write</strong>.
+            Contents stays off. No Checks permission on fine-grained tokens. Org
             may need to allow or approve the token. Stored in Keychain only — never in config or
             snapshot.
           </p>
@@ -157,21 +319,61 @@
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { formatRelativeTime } from './formatRelative';
+import {
+  computeContextMenuPosition,
+  estimateContextMenuHeight,
+  rowMenuEntries,
+} from './rowActionMenu';
 import {
   DEFAULT_POLL_INTERVAL_SECONDS,
   POLL_INTERVAL_PRESETS,
   type ConfigStatus,
+  type DashboardRow,
   type DashboardSnapshot,
+  type RowActionKind,
+  type RowActionPreview,
+  type WriteUiState,
 } from './types/dashboard';
 
 const snapshot = ref<DashboardSnapshot | null>(null);
 const configStatus = ref<ConfigStatus | null>(null);
+const writeUi = ref<WriteUiState | null>(null);
 const settingsOpen = ref(false);
 const tokenInput = ref('');
 const tokenMessage = ref('');
+const actionBanner = ref<string | null>(null);
+const actionSheetOpen = ref(false);
+const actionSheetMode = ref<RowActionKind | 'testingPassed'>('testingPassedReady');
+const actionSheetTitle = ref('');
+const actionTarget = ref<{ groupId: string; row: DashboardRow } | null>(null);
+const actionPreview = ref<RowActionPreview | null>(null);
+const actionNote = ref('');
+const actionError = ref('');
+const actionBusy = ref(false);
+const popoverEl = ref<HTMLElement | null>(null);
+const contextMenuEl = ref<HTMLElement | null>(null);
+const actionSheetEl = ref<HTMLElement | null>(null);
+const contextMenu = ref<{
+  groupId: string;
+  row: DashboardRow;
+  left: number;
+  top: number;
+} | null>(null);
+const contextMenuStyle = computed(() => {
+  if (!contextMenu.value) {
+    return {};
+  }
+  return {
+    left: `${contextMenu.value.left}px`,
+    top: `${contextMenu.value.top}px`,
+  };
+});
+const actionSheetTitleId = 'action-sheet-title';
+const testingPassedChoice = ref<RowActionKind>('testingPassedReady');
+let previewDebounce: ReturnType<typeof setTimeout> | undefined;
 let unlistenUpdated: (() => void) | undefined;
 let unlistenSettings: (() => void) | undefined;
 
@@ -179,12 +381,253 @@ async function reload(): Promise<void> {
   try {
     snapshot.value = await invoke<DashboardSnapshot>('dashboard_snapshot');
     configStatus.value = await invoke<ConfigStatus>('config_status');
+    writeUi.value = await invoke<WriteUiState>('write_ui_state_cmd');
   } catch {
     snapshot.value = null;
   }
 }
 
+const actionNeedsNote = computed(
+  () => actionSheetMode.value === 'answer' || actionPreview.value?.noteRequired,
+);
+const showOptionalNote = computed(() => {
+  if (!actionPreview.value?.wakesAgent || actionSheetMode.value === 'answer') {
+    return false;
+  }
+  if (actionSheetMode.value === 'testingPassed') {
+    return true;
+  }
+  return (
+    actionSheetMode.value !== 'testingPassedReady' &&
+    actionSheetMode.value !== 'approveReadyToMerge'
+  );
+});
+
+async function refreshPreview(action: RowActionKind): Promise<void> {
+  if (!actionTarget.value) {
+    return;
+  }
+  const { groupId, row } = actionTarget.value;
+  try {
+    actionPreview.value = await invoke<RowActionPreview>('preview_row_action_cmd', {
+      groupId,
+      org: row.org,
+      repo: row.repo,
+      number: row.number,
+      action,
+      note: actionNote.value,
+    });
+    actionError.value = '';
+  } catch (e) {
+    actionError.value = String(e);
+  }
+}
+
+function onActionNoteInput(): void {
+  if (previewDebounce) {
+    clearTimeout(previewDebounce);
+  }
+  previewDebounce = setTimeout(() => {
+    void refreshPreviewForCurrentSheet();
+  }, 200);
+}
+
+async function refreshPreviewForCurrentSheet(): Promise<void> {
+  if (actionSheetMode.value === 'testingPassed') {
+    await refreshPreview(testingPassedChoice.value);
+    return;
+  }
+  if (actionSheetMode.value !== 'testingPassed') {
+    await refreshPreview(actionSheetMode.value as RowActionKind);
+  }
+}
+
+function onTestingPassedChoiceChange(): void {
+  void refreshPreview(testingPassedChoice.value);
+}
+
+function isContextMenuForRow(groupId: string, row: DashboardRow): boolean {
+  if (!contextMenu.value) {
+    return false;
+  }
+  return (
+    contextMenu.value.groupId === groupId &&
+    contextMenu.value.row.org === row.org &&
+    contextMenu.value.row.repo === row.repo &&
+    contextMenu.value.row.number === row.number
+  );
+}
+
+function closeContextMenu(): void {
+  contextMenu.value = null;
+}
+
+function openContextMenu(event: MouseEvent, groupId: string, row: DashboardRow): void {
+  const entries = rowMenuEntries(groupId);
+  if (!entries.length || configStatus.value?.fixtureMode) {
+    return;
+  }
+  const popover = popoverEl.value;
+  if (!popover) {
+    return;
+  }
+  const rect = popover.getBoundingClientRect();
+  const menuHeight = estimateContextMenuHeight(entries.length);
+  const pos = computeContextMenuPosition(
+    rect,
+    event.clientX,
+    event.clientY,
+    { width: 200, height: menuHeight },
+  );
+  contextMenu.value = { groupId, row, left: pos.left, top: pos.top };
+  void nextTick(() => {
+    const first = contextMenuEl.value?.querySelector<HTMLButtonElement>('[role="menuitem"]');
+    first?.focus();
+  });
+}
+
+function onRowContextMenu(event: MouseEvent, groupId: string, row: DashboardRow): void {
+  openContextMenu(event, groupId, row);
+}
+
+function pickContextMenuAction(entry: {
+  mode: RowActionKind | 'testingPassed';
+  label: string;
+}): void {
+  if (!contextMenu.value) {
+    return;
+  }
+  const { groupId, row } = contextMenu.value;
+  closeContextMenu();
+  void startAction(groupId, row, entry);
+}
+
+async function startAction(
+  groupId: string,
+  row: DashboardRow,
+  entry: { mode: RowActionKind | 'testingPassed'; label: string },
+): Promise<void> {
+  actionError.value = '';
+  actionBanner.value = null;
+  actionTarget.value = { groupId, row };
+  if (entry.mode === 'testingPassed') {
+    actionSheetMode.value = 'testingPassed';
+    actionSheetTitle.value = 'Testing passed';
+    actionNote.value = '';
+    testingPassedChoice.value = 'testingPassedReady';
+    actionSheetOpen.value = true;
+    await refreshPreview('testingPassedReady');
+  } else if (entry.mode === 'answer') {
+    actionSheetMode.value = entry.mode;
+    actionSheetTitle.value = entry.label;
+    actionNote.value = '';
+    actionSheetOpen.value = true;
+    await refreshPreview('answer');
+  } else {
+    actionSheetMode.value = entry.mode;
+    actionSheetTitle.value = entry.label;
+    actionNote.value = '';
+    actionSheetOpen.value = true;
+    await refreshPreview(entry.mode);
+  }
+}
+
+function closeActionSheet(): void {
+  actionSheetOpen.value = false;
+  actionTarget.value = null;
+  actionPreview.value = null;
+  actionError.value = '';
+}
+
+function onDocumentKeydown(event: KeyboardEvent): void {
+  if (contextMenu.value && event.key === 'Escape') {
+    event.preventDefault();
+    closeContextMenu();
+    return;
+  }
+  if (!actionSheetOpen.value || actionBusy.value) {
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeActionSheet();
+    return;
+  }
+  if (event.key === 'Enter' && event.target instanceof HTMLElement) {
+    if (event.target.tagName === 'TEXTAREA') {
+      return;
+    }
+    event.preventDefault();
+    if (actionSheetMode.value === 'testingPassed') {
+      void confirmAction(testingPassedChoice.value);
+    } else {
+      void confirmAction(actionSheetMode.value as RowActionKind);
+    }
+  }
+}
+
+watch(actionSheetOpen, (open) => {
+  if (open) {
+    void nextTick(() => {
+      const primary = actionSheetEl.value?.querySelector<HTMLButtonElement>('.btn-primary');
+      primary?.focus();
+    });
+  }
+});
+
+async function confirmAction(action: RowActionKind): Promise<void> {
+  if (!actionTarget.value) {
+    return;
+  }
+  actionBusy.value = true;
+  actionError.value = '';
+  actionBanner.value = null;
+  const { groupId, row } = actionTarget.value;
+  try {
+    if (action === 'answer' && !actionNote.value.trim()) {
+      actionError.value = 'Answer text is required.';
+      return;
+    }
+    await invoke('confirm_row_action', {
+      groupId,
+      org: row.org,
+      repo: row.repo,
+      number: row.number,
+      action,
+      note: actionNote.value,
+    });
+    closeActionSheet();
+    await reload();
+  } catch (e) {
+    actionError.value = String(e);
+    actionBanner.value = String(e);
+    await reload();
+  } finally {
+    actionBusy.value = false;
+  }
+}
+
+async function onUndo(): Promise<void> {
+  try {
+    await invoke('undo_row_action_cmd');
+    await reload();
+  } catch (e) {
+    actionBanner.value = String(e);
+  }
+}
+
+async function onRetryPartial(): Promise<void> {
+  try {
+    await invoke('retry_partial_write_cmd');
+    actionBanner.value = null;
+    await reload();
+  } catch (e) {
+    actionBanner.value = String(e);
+  }
+}
+
 onMounted(async () => {
+  document.addEventListener('keydown', onDocumentKeydown);
   await reload();
   unlistenUpdated = await listen('dashboard-updated', () => {
     void reload();
@@ -195,6 +638,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  document.removeEventListener('keydown', onDocumentKeydown);
   unlistenUpdated?.();
   unlistenSettings?.();
 });

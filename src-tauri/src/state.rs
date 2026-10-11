@@ -9,6 +9,7 @@ use crate::model::{build_dashboard, DashboardSnapshot};
 use crate::etag_probe::EtagStore;
 use crate::poll::PollRuntime;
 use crate::snapshot::load_snapshot_file;
+use crate::write_state::WriteState;
 
 pub struct AppState {
     pub config: Mutex<AppConfig>,
@@ -21,6 +22,7 @@ pub struct AppState {
     pub banner: Mutex<Option<String>>,
     pub poll_runtime: Arc<PollRuntime>,
     pub etag_store: EtagStore,
+    pub write_state: Mutex<WriteState>,
 }
 
 impl AppState {
@@ -62,6 +64,7 @@ impl AppState {
             banner: Mutex::new(None),
             poll_runtime,
             etag_store,
+            write_state: Mutex::new(WriteState::new()),
         }
     }
 

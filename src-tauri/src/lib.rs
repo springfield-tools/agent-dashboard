@@ -12,8 +12,11 @@ mod pause;
 mod poll;
 mod popover_anchor;
 mod power;
+mod row_actions;
+mod row_writes;
 mod snapshot;
 mod state;
+mod write_state;
 
 #[cfg(target_os = "macos")]
 mod tray;
@@ -31,6 +34,10 @@ use crate::pause::{
     pause_until_tomorrow_local_value, pause_tooltip,
 };
 use crate::poll::{start_background_poll, update_config_and_save, PollRuntime};
+use crate::row_actions::RowActionKind;
+use crate::row_writes::{
+    execute_row_action, preview_row_action, retry_partial_write, undo_row_action, write_ui_state,
+};
 use crate::state::AppState;
 
 #[derive(serde::Serialize)]
@@ -52,11 +59,22 @@ struct ConfigStatus {
 
 #[tauri::command]
 fn dashboard_snapshot(state: tauri::State<'_, Arc<AppState>>) -> Result<DashboardSnapshot, String> {
-    state
+    let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
+    let snapshot = state
         .dashboard
         .lock()
         .map(|guard| guard.clone())
-        .map_err(|_| "dashboard lock poisoned".to_string())
+        .map_err(|_| "dashboard lock poisoned".to_string())?;
+    let write = state
+        .write_state
+        .lock()
+        .map_err(|_| "write lock poisoned".to_string())?;
+    Ok(crate::write_state::merged_snapshot(
+        &snapshot,
+        &config,
+        &write.optimistic_labels,
+        &write.pending,
+    ))
 }
 
 #[tauri::command]
@@ -158,6 +176,54 @@ fn resume_polling(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Res
 }
 
 #[tauri::command]
+fn preview_row_action_cmd(
+    state: tauri::State<'_, Arc<AppState>>,
+    group_id: String,
+    org: String,
+    repo: String,
+    number: u32,
+    action: RowActionKind,
+    note: String,
+) -> Result<crate::row_actions::RowActionPreview, String> {
+    preview_row_action(state.inner().as_ref(), &group_id, &org, &repo, number, action, &note)
+}
+
+#[tauri::command]
+async fn confirm_row_action(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    group_id: String,
+    org: String,
+    repo: String,
+    number: u32,
+    action: RowActionKind,
+    note: String,
+) -> Result<(), String> {
+    execute_row_action(app, state.inner().clone(), group_id, org, repo, number, action, note).await
+}
+
+#[tauri::command]
+async fn undo_row_action_cmd(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    undo_row_action(app, state.inner().clone()).await
+}
+
+#[tauri::command]
+async fn retry_partial_write_cmd(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<(), String> {
+    retry_partial_write(app, state.inner().clone()).await
+}
+
+#[tauri::command]
+fn write_ui_state_cmd(state: tauri::State<'_, Arc<AppState>>) -> crate::write_state::WriteUiState {
+    write_ui_state(state.inner())
+}
+
+#[tauri::command]
 fn refresh_now(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     tray::trigger_refresh(&app, true);
@@ -190,6 +256,11 @@ pub fn run(fixture_mode: bool) {
             pause_polling,
             resume_polling,
             refresh_now,
+            preview_row_action_cmd,
+            confirm_row_action,
+            undo_row_action_cmd,
+            retry_partial_write_cmd,
+            write_ui_state_cmd,
         ]);
 
     builder = builder.setup(move |app| {
