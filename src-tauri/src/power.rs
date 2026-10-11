@@ -8,7 +8,7 @@ use crate::poll::PollRuntime;
 use crate::state::AppState;
 
 /// Queue one post-wake refresh on the poll loop (user pause only suppresses wake).
-pub fn handle_system_wake<R: tauri::Runtime>(state: &Arc<AppState>) {
+pub fn handle_system_wake(state: &Arc<AppState>) {
     let user_paused = state
         .config
         .lock()

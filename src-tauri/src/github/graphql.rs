@@ -526,14 +526,15 @@ pub(crate) fn ingest_org_repositories_response(
 }
 
 fn accumulate_rate_limit(total: &mut Option<RateLimitInfo>, part: Option<RateLimitInfo>) {
-    match (total, part) {
-        (None, Some(p)) => *total = Some(p),
-        (Some(t), Some(p)) => {
-            t.cost += p.cost;
-            t.remaining = p.remaining;
-            t.reset_at = p.reset_at;
+    if let Some(p) = part {
+        match total {
+            None => *total = Some(p),
+            Some(t) => {
+                t.cost += p.cost;
+                t.remaining = p.remaining;
+                t.reset_at = p.reset_at;
+            }
         }
-        _ => {}
     }
 }
 

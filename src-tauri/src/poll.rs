@@ -10,7 +10,7 @@ use crate::backoff::{wait_seconds_for_failure, FailureKind};
 use crate::brakes::{apply_brakes, brake_slow_interval_for_cost, LOW_REMAINING_STOP};
 use crate::config::{save_config, AppConfig};
 use crate::credential::{clear_gh_session_cache, obtain_github_token, uses_gh_credential};
-use crate::etag_probe::{evaluate_probe, EtagStore};
+use crate::etag_probe::evaluate_probe;
 use crate::github::{fetch_all_orgs, GraphqlError};
 use crate::idle;
 use crate::model::build_dashboard;
