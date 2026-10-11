@@ -441,8 +441,8 @@ mod tests {
 
         let server = MockServer::start();
         let base = server.base_url();
-        let owner = "ham";
-        let repo = "repo";
+        let owner = "o";
+        let repo = "r";
         let number = 5u32;
         let issue_path = format!("/repos/{owner}/{repo}/issues/{number}");
 
@@ -514,8 +514,8 @@ mod tests {
             owner,
             repo,
             number,
-            &vec!["ready-to-merge".to_string()],
-            &vec!["needs-testing".to_string()],
+            &write_add,
+            &write_remove,
         )
         .await
         .expect("write label diff");
