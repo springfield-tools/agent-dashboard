@@ -516,10 +516,6 @@ mod tests {
                 .path("/repos/o/r/issues/5/labels/needs-testing");
             then.status(200);
         });
-        let write_add_ready = server.mock(|when, then| {
-            when.method(POST).path("/repos/o/r/issues/5/labels");
-            then.status(200);
-        });
         let write_labels_to_add = vec!["ready-to-merge".to_string()];
         remove_label_at(
             &client,
@@ -533,6 +529,11 @@ mod tests {
         .await
         .expect("write remove needs-testing");
         write_remove_needs_testing.assert();
+
+        let write_add_ready = server.mock(|when, then| {
+            when.method(POST).path("/repos/o/r/issues/5/labels");
+            then.status(200);
+        });
         add_labels_at(
             &client,
             &base,
@@ -568,10 +569,6 @@ mod tests {
                 .path("/repos/o/r/issues/5/labels/ready-to-merge");
             then.status(200);
         });
-        let undo_add_needs_testing = server.mock(|when, then| {
-            when.method(POST).path("/repos/o/r/issues/5/labels");
-            then.status(200);
-        });
         let undo_delete_comment = server.mock(|when, then| {
             when.method(DELETE)
                 .path("/repos/o/r/issues/comments/42");
@@ -589,6 +586,11 @@ mod tests {
         .await
         .expect("undo remove ready-to-merge");
         undo_remove_ready.assert();
+
+        let undo_add_needs_testing = server.mock(|when, then| {
+            when.method(POST).path("/repos/o/r/issues/5/labels");
+            then.status(200);
+        });
         let undo_labels_to_add = vec!["needs-testing".to_string()];
         add_labels_at(
             &client,
