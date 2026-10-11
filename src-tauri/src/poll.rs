@@ -465,13 +465,13 @@ pub async fn run_poll_cycle<R: Runtime>(
             } = err
             {
                 let nanos = Utc::now().timestamp_subsec_nanos();
-                if primary_exhausted {
+                if *primary_exhausted {
                     if let Some(ref reset) = reset_at {
                         set_primary_rate_limit_until(&state.poll_runtime, reset, nanos);
                     } else {
                         set_secondary_rate_limit_until(&state.poll_runtime, 300, nanos);
                     }
-                } else if let Some(retry) = retry_after_secs {
+                } else if let Some(retry) = *retry_after_secs {
                     set_secondary_rate_limit_until(&state.poll_runtime, retry, nanos);
                 } else if let Some(ref reset) = reset_at {
                     set_primary_rate_limit_until(&state.poll_runtime, reset, nanos);
