@@ -29,7 +29,9 @@
       <p v-else-if="configStatus?.pollingPaused" class="banner banner-info">
         {{ configStatus.pauseTooltip }}
       </p>
+      <p v-else-if="actionBanner" class="banner banner-warn">{{ actionBanner }}</p>
       <p v-else-if="configStatus?.banner" class="banner banner-warn">{{ configStatus.banner }}</p>
+      <p v-if="writeUi?.toast" class="banner banner-info">{{ writeUi.toast }}</p>
       <div v-if="!configStatus?.fixtureMode" class="controls">
         <label class="control-label">
           Poll
@@ -61,31 +63,131 @@
     <main class="sections">
       <section v-for="group in snapshot?.groups ?? []" :key="group.id" class="section">
         <h2 class="section-title">{{ group.title }} · {{ group.items.length }}</h2>
-        <button
+        <div
           v-for="row in group.items"
           :key="`${row.repo}-${row.number}`"
-          type="button"
-          class="row row-button"
-          @click="openRow(row.url)"
+          class="row row-wrap"
         >
-          <span class="row-top">
-            <span class="row-repo">{{ row.repo }}</span>
-            <span class="row-number">#{{ row.number }}</span>
-            <span v-if="row.draft" class="chip chip-kind">Draft</span>
-            <span v-else class="chip chip-kind">{{ row.kind === 'pr' ? 'PR' : 'Issue' }}</span>
-          </span>
-          <span class="row-title">{{ row.title }}</span>
-          <span class="row-meta">
-            <span class="row-author">@{{ row.author }}</span>
-            <span class="row-time">{{ formatRelativeTime(row.updatedAt) }}</span>
-          </span>
-          <span v-if="row.chips.length" class="row-chips">
-            <span v-for="chip in row.chips" :key="chip.label" class="chip">{{ chip.label }}</span>
-          </span>
-        </button>
+          <button type="button" class="row row-button row-main" @click="openRow(row.url)">
+            <span class="row-top">
+              <span class="row-repo">{{ row.repo }}</span>
+              <span class="row-number">#{{ row.number }}</span>
+              <span v-if="row.draft" class="chip chip-kind">Draft</span>
+              <span v-else class="chip chip-kind">{{ row.kind === 'pr' ? 'PR' : 'Issue' }}</span>
+            </span>
+            <span class="row-title">{{ row.title }}</span>
+            <span class="row-meta">
+              <span class="row-author">@{{ row.author }}</span>
+              <span class="row-time">{{ formatRelativeTime(row.updatedAt) }}</span>
+            </span>
+            <span v-if="row.chips.length" class="row-chips">
+              <span v-for="chip in row.chips" :key="chip.label" class="chip">{{ chip.label }}</span>
+            </span>
+          </button>
+          <button
+            v-if="!configStatus?.fixtureMode && rowMenuEntries(group.id).length"
+            type="button"
+            class="row-menu-btn"
+            title="Actions"
+            @click.stop="openRowPicker(group.id, row)"
+          >
+            ⋯
+          </button>
+        </div>
       </section>
       <p v-if="!snapshot?.groups.length" class="empty">No open items in this view.</p>
     </main>
+    <div v-if="writeUi?.undoAvailable" class="undo-bar">
+      <button type="button" class="btn-text" @click="onUndo">Undo last action</button>
+      <span v-if="writeUi.undoMessage" class="undo-hint">{{ writeUi.undoMessage }}</span>
+    </div>
+    <div v-if="writeUi?.partialFailure" class="undo-bar">
+      <button type="button" class="btn-text" @click="onRetryPartial">
+        Retry {{ writeUi.partialFailure.kind === 'retryLabels' ? 'labels' : 'comment' }}
+      </button>
+      <span class="undo-hint">{{ writeUi.partialFailure.message }}</span>
+    </div>
+
+    <dialog v-if="rowPicker" class="settings-sheet" open @click.self="rowPicker = null">
+      <div class="settings-panel" @click.stop>
+        <h2 class="settings-title">Row actions</h2>
+        <p class="action-target">
+          {{ rowPicker.row.repo }}#{{ rowPicker.row.number }}
+        </p>
+        <button
+          v-for="entry in rowMenuEntries(rowPicker.groupId)"
+          :key="entry.label"
+          type="button"
+          class="btn-text row-picker-btn"
+          @click="startAction(rowPicker.groupId, rowPicker.row, entry)"
+        >
+          {{ entry.label }}
+        </button>
+        <button type="button" class="btn-text" @click="rowPicker = null">Cancel</button>
+      </div>
+    </dialog>
+
+    <dialog v-if="actionSheetOpen" class="settings-sheet" open @click.self="closeActionSheet">
+      <div class="settings-panel action-panel" @click.stop>
+        <h2 class="settings-title">{{ actionSheetTitle }}</h2>
+        <p v-if="actionTarget" class="action-target">
+          {{ actionTarget.row.repo }}#{{ actionTarget.row.number }} · {{ actionTarget.row.title }}
+        </p>
+        <p v-if="actionPreview" class="action-diff">
+          <strong>Labels</strong>
+          <span v-if="actionPreview.labelsToRemove.length">
+            − {{ actionPreview.labelsToRemove.join(', ') }}
+          </span>
+          <span v-if="actionPreview.labelsToAdd.length">
+            + {{ actionPreview.labelsToAdd.join(', ') }}
+          </span>
+        </p>
+        <pre v-if="actionPreview" class="action-comment">{{ actionPreview.commentBody }}</pre>
+        <label v-if="actionNeedsNote" class="settings-label">
+          Note
+          <textarea v-model="actionNote" class="settings-input action-note" rows="3" />
+        </label>
+        <label v-else-if="showOptionalNote" class="settings-label">
+          Optional note
+          <textarea v-model="actionNote" class="settings-input action-note" rows="2" />
+        </label>
+        <p v-if="actionError" class="banner banner-error">{{ actionError }}</p>
+        <div class="settings-actions action-buttons">
+          <template v-if="actionSheetMode === 'testingPassed'">
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="actionBusy"
+              @click="confirmAction('testingPassedReady')"
+            >
+              Ready to merge
+            </button>
+            <button
+              type="button"
+              class="btn-text"
+              :disabled="actionBusy"
+              @click="confirmAction('testingPassedHandBack')"
+            >
+              Hand back to agent
+            </button>
+          </template>
+          <template v-else>
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="actionBusy"
+              @click="confirmAction(actionSheetMode as RowActionKind)"
+            >
+              Confirm
+            </button>
+          </template>
+          <button type="button" class="btn-text" :disabled="actionBusy" @click="closeActionSheet">
+            Cancel
+          </button>
+        </div>
+      </div>
+    </dialog>
+
     <footer class="footer">
       <button
         v-if="snapshot?.bots"
@@ -117,8 +219,9 @@
         </p>
         <template v-else>
           <p class="settings-hint">
-            Fine-grained PAT for resource owner springfield-ham-radio: Metadata, Issues, Pull
-            requests, and Commit statuses (Read). No Checks permission on fine-grained tokens. Org
+            Fine-grained PAT for resource owner springfield-ham-radio: Metadata and Commit
+            statuses (Read). Row actions need Issues and Pull requests <strong>Read and write</strong>.
+            Contents stays off. No Checks permission on fine-grained tokens. Org
             may need to allow or approve the token. Stored in Keychain only — never in config or
             snapshot.
           </p>
@@ -164,14 +267,29 @@ import {
   DEFAULT_POLL_INTERVAL_SECONDS,
   POLL_INTERVAL_PRESETS,
   type ConfigStatus,
+  type DashboardRow,
   type DashboardSnapshot,
+  type RowActionKind,
+  type RowActionPreview,
+  type WriteUiState,
 } from './types/dashboard';
 
 const snapshot = ref<DashboardSnapshot | null>(null);
 const configStatus = ref<ConfigStatus | null>(null);
+const writeUi = ref<WriteUiState | null>(null);
 const settingsOpen = ref(false);
 const tokenInput = ref('');
 const tokenMessage = ref('');
+const actionBanner = ref<string | null>(null);
+const actionSheetOpen = ref(false);
+const actionSheetMode = ref<RowActionKind | 'testingPassed'>('testingPassedReady');
+const actionSheetTitle = ref('');
+const actionTarget = ref<{ groupId: string; row: DashboardRow } | null>(null);
+const actionPreview = ref<RowActionPreview | null>(null);
+const actionNote = ref('');
+const actionError = ref('');
+const actionBusy = ref(false);
+const rowPicker = ref<{ groupId: string; row: DashboardRow } | null>(null);
 let unlistenUpdated: (() => void) | undefined;
 let unlistenSettings: (() => void) | undefined;
 
@@ -179,8 +297,141 @@ async function reload(): Promise<void> {
   try {
     snapshot.value = await invoke<DashboardSnapshot>('dashboard_snapshot');
     configStatus.value = await invoke<ConfigStatus>('config_status');
+    writeUi.value = await invoke<WriteUiState>('write_ui_state_cmd');
   } catch {
     snapshot.value = null;
+  }
+}
+
+function rowMenuEntries(groupId: string): { mode: RowActionKind | 'testingPassed'; label: string }[] {
+  switch (groupId) {
+    case 'needs-testing':
+      return [
+        { mode: 'testingPassed', label: 'Testing passed…' },
+        { mode: 'sendBackToAgent', label: 'Send back to agent' },
+      ];
+    case 'ci-failing':
+      return [{ mode: 'sendBackToAgent', label: 'Send back to agent' }];
+    case 'needs-input':
+      return [{ mode: 'answer', label: 'Answer' }];
+    case 'not-started':
+    case 'agent-working':
+      return [{ mode: 'approveReadyToMerge', label: 'Approve / ready to merge' }];
+    default:
+      return [];
+  }
+}
+
+const actionNeedsNote = computed(
+  () => actionSheetMode.value === 'answer' || actionPreview.value?.noteRequired,
+);
+const showOptionalNote = computed(() => {
+  if (!actionPreview.value?.wakesAgent || actionSheetMode.value === 'answer') {
+    return false;
+  }
+  if (actionSheetMode.value === 'testingPassed') {
+    return true;
+  }
+  return (
+    actionSheetMode.value !== 'testingPassedReady' &&
+    actionSheetMode.value !== 'approveReadyToMerge'
+  );
+});
+
+async function refreshPreview(action: RowActionKind): Promise<void> {
+  if (!actionTarget.value) {
+    return;
+  }
+  const { groupId, row } = actionTarget.value;
+  actionPreview.value = await invoke<RowActionPreview>('preview_row_action_cmd', {
+    groupId,
+    org: row.org,
+    repo: row.repo,
+    number: row.number,
+    action,
+    note: actionNote.value,
+  });
+}
+
+function openRowPicker(groupId: string, row: DashboardRow): void {
+  rowPicker.value = { groupId, row };
+}
+
+async function startAction(
+  groupId: string,
+  row: DashboardRow,
+  entry: { mode: RowActionKind | 'testingPassed'; label: string },
+): Promise<void> {
+  rowPicker.value = null;
+  actionError.value = '';
+  actionBanner.value = null;
+  actionTarget.value = { groupId, row };
+  if (entry.mode === 'testingPassed') {
+    actionSheetMode.value = 'testingPassed';
+    actionSheetTitle.value = 'Testing passed';
+    actionNote.value = '';
+    await refreshPreview('testingPassedReady');
+  } else {
+    actionSheetMode.value = entry.mode;
+    actionSheetTitle.value = entry.label;
+    actionNote.value = '';
+    await refreshPreview(entry.mode);
+  }
+  actionSheetOpen.value = true;
+}
+
+function closeActionSheet(): void {
+  actionSheetOpen.value = false;
+  actionTarget.value = null;
+  actionPreview.value = null;
+  actionError.value = '';
+}
+
+async function confirmAction(action: RowActionKind): Promise<void> {
+  if (!actionTarget.value) {
+    return;
+  }
+  actionBusy.value = true;
+  actionError.value = '';
+  actionBanner.value = null;
+  const { groupId, row } = actionTarget.value;
+  try {
+    await refreshPreview(action);
+    await invoke('confirm_row_action', {
+      groupId,
+      org: row.org,
+      repo: row.repo,
+      number: row.number,
+      action,
+      note: actionNote.value,
+    });
+    closeActionSheet();
+    await reload();
+  } catch (e) {
+    actionError.value = String(e);
+    actionBanner.value = String(e);
+    await reload();
+  } finally {
+    actionBusy.value = false;
+  }
+}
+
+async function onUndo(): Promise<void> {
+  try {
+    await invoke('undo_row_action_cmd');
+    await reload();
+  } catch (e) {
+    actionBanner.value = String(e);
+  }
+}
+
+async function onRetryPartial(): Promise<void> {
+  try {
+    await invoke('retry_partial_write_cmd');
+    actionBanner.value = null;
+    await reload();
+  } catch (e) {
+    actionBanner.value = String(e);
   }
 }
 

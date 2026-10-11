@@ -545,6 +545,9 @@ pub async fn run_poll_cycle<R: Runtime>(
             poll_remaining,
         );
         state.set_dashboard(snapshot.clone());
+        if let Ok(mut write) = state.write_state.lock() {
+            write.clear_on_poll_success();
+        }
         #[cfg(target_os = "macos")]
         tray::sync_tray_from_snapshot(app, &snapshot);
 

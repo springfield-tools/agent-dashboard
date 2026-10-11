@@ -78,12 +78,34 @@ body {
   opacity: 0.75;
 }
 
+.row-wrap {
+  display: flex;
+  gap: 4px;
+  align-items: stretch;
+  margin-bottom: 6px;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.row-menu-btn {
+  flex: 0 0 auto;
+  width: 32px;
+  border: 1px solid rgb(0 0 0 / 8%);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 80%);
+  color: inherit;
+  font-size: 16px;
+  cursor: pointer;
+}
+
 .row-button {
   display: flex;
   flex-direction: column;
   gap: 4px;
   width: 100%;
-  margin-bottom: 6px;
   padding: 8px 10px;
   border: 1px solid rgb(0 0 0 / 8%);
   border-radius: 8px;
@@ -94,8 +116,47 @@ body {
   cursor: pointer;
 }
 
-.row-button:hover {
+.row-button:hover,
+.row-menu-btn:hover {
   border-color: rgb(0 0 0 / 18%);
+}
+
+.action-comment {
+  max-height: 120px;
+  overflow: auto;
+  margin: 8px 0;
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  white-space: pre-wrap;
+  background: rgb(0 0 0 / 5%);
+}
+
+.undo-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgb(0 0 0 / 4%);
+}
+
+.undo-hint {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+.row-picker-btn {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-bottom: 4px;
+}
+
+.action-note {
+  min-height: 48px;
+  resize: vertical;
 }
 
 .row-top {
