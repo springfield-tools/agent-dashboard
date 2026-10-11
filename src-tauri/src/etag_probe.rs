@@ -201,7 +201,7 @@ async fn repo_names_for_probe(
         .map_err(|e| e.to_string())?;
     let text = response.text().await.map_err(|e| e.to_string())?;
     let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    let names = json
+    let names: Vec<String> = json
         .as_array()
         .map(|arr| {
             arr.iter()

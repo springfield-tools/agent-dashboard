@@ -9,7 +9,7 @@ mod macos {
     const ANY_INPUT: u32 = 0xFFFF_FFFF;
 
     pub fn seconds_since_last_input() -> f64 {
-        CGEventSourceSecondsSinceLastEventType(HID_SYSTEM_STATE, ANY_INPUT)
+        unsafe { CGEventSourceSecondsSinceLastEventType(HID_SYSTEM_STATE, ANY_INPUT) }
     }
 }
 

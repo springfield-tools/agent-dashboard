@@ -24,7 +24,7 @@ pub fn primary_limit_wait_until_reset(reset_at: &str, nanos: u32) -> Option<Date
         .map(|t| t.with_timezone(&Utc))
         .ok()?;
     let extra = 1 + (nanos as u64 % 5);
-    Some(until + chrono::Duration::seconds(extra))
+    Some(until + chrono::Duration::seconds(extra as i64))
 }
 
 pub fn next_transient_backoff(current: u64) -> u64 {

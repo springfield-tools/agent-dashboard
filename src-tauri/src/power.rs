@@ -52,7 +52,7 @@ pub fn install_wake_listener<R: tauri::Runtime>(
         center.addObserverForName_object_queue_usingBlock(
             Some(NSWorkspaceDidWakeNotification),
             None,
-            Some(NSOperationQueue::mainQueue()),
+            Some(&*NSOperationQueue::mainQueue()),
             &block,
         );
     }

@@ -91,7 +91,7 @@ fn set_rate_limit_until(
         Utc::now() + chrono::Duration::minutes(5)
     };
     let extra = 1 + (nanos as u64 % 5);
-    let until = until + chrono::Duration::seconds(extra);
+    let until = until + chrono::Duration::seconds(extra as i64);
     if let Ok(mut guard) = runtime.rate_limit_until.lock() {
         *guard = Some(until);
     }
@@ -109,6 +109,7 @@ async fn sleep_until_deadline(runtime: &Arc<PollRuntime>, deadline: DateTime<Utc
     false
 }
 
+#[derive(PartialEq)]
 enum IdleTransition {
     None,
     EnteredIdle,
