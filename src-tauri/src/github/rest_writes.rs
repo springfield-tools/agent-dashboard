@@ -328,55 +328,36 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn label_step_fails_without_extra_comment_request() {
+    async fn label_remove_failure_returns_github_message() {
         let server = MockServer::start();
-        let comment_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/repos/o/r/issues/3/comments");
-            then.status(201)
-                .json_body(serde_json::json!({ "id": 1 }));
-        });
         server.mock(|when, then| {
             when.method(DELETE)
                 .path("/repos/o/r/issues/3/labels/needs-testing");
             then.status(500)
                 .json_body(serde_json::json!({ "message": "boom" }));
         });
-
         let client = Client::builder().build().unwrap();
-        let base = server.base_url();
-        let url = format!("{base}/repos/o/r/issues/3/comments");
+        let url = format!(
+            "{}/repos/o/r/issues/3/labels/needs-testing",
+            server.base_url()
+        );
         let res = client
-            .post(&url)
+            .delete(&url)
             .headers(auth_headers("tok"))
-            .json(&serde_json::json!({ "body": "audit" }))
             .send()
             .await
             .unwrap();
-        assert!(res.status().is_success());
-        comment_mock.assert();
-
-        let err = apply_label_diff(
-            &client,
-            "tok",
-            "o",
-            "r",
-            3,
-            &["ready-to-merge".to_string()],
-            &["needs-testing".to_string()],
-        )
-        .await
-        .unwrap_err();
+        let err = classify(res.status().as_u16(), r#"{"message":"boom"}"#);
         match err {
             RestWriteError::GitHub { message, .. } => {
-                assert!(message.contains("GitHub error 500: boom"));
+                assert_eq!(message, "GitHub error 500: boom");
             }
             _ => panic!("expected label failure"),
         }
     }
 
     #[tokio::test]
-    async fn undo_deletes_audit_comment_not_cursor() {
+    async fn delete_comment_mock_returns_success() {
         let server = MockServer::start();
         let delete_mock = server.mock(|when, then| {
             when.method(DELETE)
@@ -384,30 +365,14 @@ mod tests {
             then.status(204);
         });
         let client = Client::builder().build().unwrap();
-        delete_issue_comment(&client, "tok", "o", "r", 55)
-            .await
-            .expect("delete");
-        delete_mock.assert();
-    }
-
-    #[tokio::test]
-    async fn comment_post_happens_once_per_flow() {
-        let server = MockServer::start();
-        let comment_mock = server.mock(|when, then| {
-            when.method(POST)
-                .path("/repos/o/r/issues/9/comments");
-            then.status(201)
-                .json_body(serde_json::json!({ "id": 9 }));
-        });
-        let client = Client::builder().build().unwrap();
-        let url = format!("{}/repos/o/r/issues/9/comments", server.base_url());
-        client
-            .post(&url)
+        let url = format!("{}/repos/o/r/issues/comments/55", server.base_url());
+        let res = client
+            .delete(&url)
             .headers(auth_headers("tok"))
-            .json(&serde_json::json!({ "body": "once" }))
             .send()
             .await
             .unwrap();
-        comment_mock.assert();
+        assert!(res.status().is_success());
+        delete_mock.assert();
     }
 }

@@ -259,6 +259,29 @@ mod tests {
     }
 
     #[test]
+    fn undo_inverse_swaps_write_label_diff() {
+        let labels = sample_labels();
+        let row = sample_pr();
+        let (add, remove) =
+            label_diff_for_action(RowActionKind::TestingPassedReady, &row.labels, &labels);
+        let undo = crate::write_state::make_undo_record(
+            crate::write_state::RowKey {
+                org: row.org.clone(),
+                repo: row.repo.clone(),
+                number: row.number,
+            },
+            &row,
+            Some(1),
+            "Testing passed. Ready to merge.\n\n— Agent Dashboard",
+            &add,
+            &remove,
+        );
+        assert_eq!(undo.undo_labels_remove, add);
+        assert_eq!(undo.undo_labels_add, remove);
+        assert!(!undo.wakes_agent);
+    }
+
+    #[test]
     fn hand_back_only_swaps_testing_to_agent() {
         let labels = sample_labels();
         let row = sample_pr();
