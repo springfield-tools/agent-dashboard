@@ -1,0 +1,32 @@
+query OrgOpenItems($org: String!, $repoAfter: String) {
+  rateLimit { cost remaining resetAt }
+  organization(login: $org) {
+    repositories(first: 15, after: $repoAfter, orderBy: {field: PUSHED_AT, direction: DESC}, isFork: false) {
+      totalCount
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        name
+        isArchived
+        pullRequests(states: OPEN, first: 10) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            number title url updatedAt isDraft
+            author { login }
+            labels(first: 5) { nodes { name } }
+            commits(last: 1) {
+              nodes { commit { statusCheckRollup { state } } }
+            }
+          }
+        }
+        issues(states: OPEN, first: 5) {
+          pageInfo { hasNextPage endCursor }
+          nodes {
+            number title url updatedAt
+            author { login }
+            labels(first: 5) { nodes { name } }
+          }
+        }
+      }
+    }
+  }
+}

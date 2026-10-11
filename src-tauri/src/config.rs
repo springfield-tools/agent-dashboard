@@ -7,7 +7,7 @@ use thiserror::Error;
 
 pub const POLL_INTERVAL_MIN: u64 = 15;
 pub const POLL_INTERVAL_MAX: u64 = 900;
-pub const DEFAULT_POLL_INTERVAL: u64 = 30;
+pub const DEFAULT_POLL_INTERVAL: u64 = 60;
 
 const KNOWN_ROOT_KEYS: [&str; 11] = [
     "poll_interval_seconds",
@@ -197,7 +197,7 @@ fn default_idle_pause() -> u64 {
 }
 
 fn default_ci_staleness() -> u64 {
-    30
+    DEFAULT_POLL_INTERVAL
 }
 
 fn default_orgs() -> Vec<OrgConfig> {
@@ -216,7 +216,7 @@ impl Default for AppConfig {
             pause_when_idle: false,
             idle_pause_after_seconds: 300,
             use_etag_probe: false,
-            ci_max_staleness_seconds: 30,
+            ci_max_staleness_seconds: default_ci_staleness(),
             github: GithubConfig::default(),
             filters: FiltersConfig::default(),
             tray: TrayConfig::default(),
@@ -361,7 +361,8 @@ fn patch_config_document(existing: &str, config: &AppConfig) -> Result<String, S
         .parse::<DocumentMut>()
         .map_err(|e| format!("parse config for save: {e}"))?;
 
-    doc["poll_interval_seconds"] = value(i64::try_from(config.poll_interval_seconds).unwrap_or(30));
+    doc["poll_interval_seconds"] =
+        value(i64::try_from(config.poll_interval_seconds).unwrap_or(DEFAULT_POLL_INTERVAL as i64));
     match &config.poll_pause {
         Some(pause) => doc["poll_pause"] = value(pause.as_str()),
         None => {
@@ -375,6 +376,12 @@ fn patch_config_document(existing: &str, config: &AppConfig) -> Result<String, S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_config_default_poll_interval() {
+        assert_eq!(AppConfig::default().poll_interval_seconds, 60);
+        assert_eq!(AppConfig::default().ci_max_staleness_seconds, 60);
+    }
 
     #[test]
     fn accepts_poll_interval_in_range() {
@@ -408,6 +415,7 @@ mod tests {
         assert!(example_config_text().contains("[filters]"));
         assert!(example_config_text().contains("bots = \"collapse\""));
         assert!(example_config_text().contains("# hide | collapse | show"));
+        assert!(example_config_text().contains("poll_interval_seconds = 60"));
         assert!(!example_config_text().trim().is_empty());
     }
 

@@ -9,43 +9,93 @@ pub fn legacy_search_query_string(org: &OrgConfig) -> String {
     format!("org:{} is:open archived:false", org.name)
 }
 
-const ORG_OPEN_QUERY: &str = r"
+/// Cheap org page: small `first` limits, rollup `state` only (no contexts on hot path).
+pub(crate) const ORG_OPEN_QUERY: &str = r"
 query OrgOpenItems($org: String!, $repoAfter: String) {
   rateLimit { cost remaining resetAt }
   organization(login: $org) {
-    repositories(first: 50, after: $repoAfter, orderBy: {field: PUSHED_AT, direction: DESC}, isFork: false) {
+    repositories(first: 15, after: $repoAfter, orderBy: {field: PUSHED_AT, direction: DESC}, isFork: false) {
       totalCount
       pageInfo { hasNextPage endCursor }
       nodes {
         name
         isArchived
-        pullRequests(states: OPEN, first: 100) {
+        pullRequests(states: OPEN, first: 10) {
+          pageInfo { hasNextPage endCursor }
           nodes {
             number title url updatedAt isDraft
             author { login }
-            labels(first: 20) { nodes { name } }
+            labels(first: 5) { nodes { name } }
             commits(last: 1) {
-              nodes {
-                commit {
-                  statusCheckRollup {
-                    state
-                    contexts(first: 20) {
-                      nodes {
-                        ... on CheckRun { name conclusion status }
-                        ... on StatusContext { context state }
-                      }
-                    }
-                  }
-                }
-              }
+              nodes { commit { statusCheckRollup { state } } }
             }
           }
         }
-        issues(states: OPEN, first: 100) {
+        issues(states: OPEN, first: 5) {
+          pageInfo { hasNextPage endCursor }
           nodes {
             number title url updatedAt
             author { login }
-            labels(first: 20) { nodes { name } }
+            labels(first: 5) { nodes { name } }
+          }
+        }
+      }
+    }
+  }
+}
+";
+
+const REPO_PR_PAGE_QUERY: &str = r"
+query RepoPrPage($owner: String!, $name: String!, $after: String) {
+  rateLimit { cost remaining resetAt }
+  repository(owner: $owner, name: $name) {
+    pullRequests(states: OPEN, first: 10, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number title url updatedAt isDraft
+        author { login }
+        labels(first: 5) { nodes { name } }
+        commits(last: 1) {
+          nodes { commit { statusCheckRollup { state } } }
+        }
+      }
+    }
+  }
+}
+";
+
+const REPO_ISSUE_PAGE_QUERY: &str = r"
+query RepoIssuePage($owner: String!, $name: String!, $after: String) {
+  rateLimit { cost remaining resetAt }
+  repository(owner: $owner, name: $name) {
+    issues(states: OPEN, first: 5, after: $after) {
+      pageInfo { hasNextPage endCursor }
+      nodes {
+        number title url updatedAt
+        author { login }
+        labels(first: 5) { nodes { name } }
+      }
+    }
+  }
+}
+";
+
+const PR_FAILURE_CONTEXTS_QUERY: &str = r"
+query PrFailureContexts($owner: String!, $name: String!, $number: Int!) {
+  rateLimit { cost remaining resetAt }
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              contexts(first: 10) {
+                nodes {
+                  ... on CheckRun { name conclusion status }
+                  ... on StatusContext { context state }
+                }
+              }
+            }
           }
         }
       }
@@ -107,6 +157,8 @@ pub enum GraphqlError {
     RateLimited {
         retry_after_secs: Option<u64>,
         reset_at: Option<String>,
+        /// True when the primary GraphQL budget is exhausted (remaining 0).
+        primary_exhausted: bool,
         message: String,
     },
     #[error("forbidden")]
@@ -137,6 +189,18 @@ pub(crate) struct SearchPage {
     pub issue_count: Option<u64>,
 }
 
+#[derive(Clone)]
+pub(crate) enum RepoItemPageKind {
+    PullRequests,
+    Issues,
+}
+
+pub(crate) struct PendingRepoPagination {
+    pub repo: String,
+    pub kind: RepoItemPageKind,
+    pub after: String,
+}
+
 pub(crate) struct OrgRepoPage {
     pub items: Vec<RawItem>,
     pub rate_limit: Option<RateLimitInfo>,
@@ -146,6 +210,7 @@ pub(crate) struct OrgRepoPage {
     pub has_next: bool,
     pub end_cursor: Option<String>,
     pub organization_missing: bool,
+    pub pending: Vec<PendingRepoPagination>,
 }
 
 fn header_u64(headers: &HeaderMap, name: &str) -> Option<u64> {
@@ -162,6 +227,14 @@ fn parse_retry_after(headers: &HeaderMap) -> Option<u64> {
         .and_then(|s| s.parse().ok())
 }
 
+fn header_reset_at(headers: &HeaderMap) -> Option<String> {
+    header_u64(headers, "x-ratelimit-reset").and_then(|epoch| {
+        chrono::DateTime::from_timestamp(epoch as i64, 0).map(|t| {
+            t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        })
+    })
+}
+
 fn classify_http_error(status: u16, headers: &HeaderMap, body: &str) -> GraphqlError {
     let remaining = header_u64(headers, "x-ratelimit-remaining");
     let retry_after = parse_retry_after(headers);
@@ -173,7 +246,8 @@ fn classify_http_error(status: u16, headers: &HeaderMap, body: &str) -> GraphqlE
     if rate_limited {
         return GraphqlError::RateLimited {
             retry_after_secs: retry_after,
-            reset_at: None,
+            reset_at: header_reset_at(headers),
+            primary_exhausted: remaining == Some(0),
             message: truncate_body(body),
         };
     }
@@ -200,6 +274,7 @@ fn graphql_errors_fatal(errors: &serde_json::Value) -> Option<GraphqlError> {
             return Some(GraphqlError::RateLimited {
                 retry_after_secs: None,
                 reset_at: None,
+                primary_exhausted: true,
                 message: errors.to_string(),
             });
         }
@@ -332,6 +407,7 @@ pub(crate) fn ingest_org_repositories_response(
             has_next: false,
             end_cursor: None,
             organization_missing: true,
+            pending: vec![],
         });
     }
 
@@ -348,6 +424,7 @@ pub(crate) fn ingest_org_repositories_response(
 
     let mut items = Vec::new();
     let mut repos_in_page = 0u32;
+    let mut pending = Vec::new();
     let nodes = repos
         .get("nodes")
         .and_then(|n| n.as_array())
@@ -370,8 +447,9 @@ pub(crate) fn ingest_org_repositories_response(
         }
         repos_in_page += 1;
 
-        if let Some(pr_nodes) = repo_node
-            .pointer("/pullRequests/nodes")
+        let pr_conn = repo_node.get("pullRequests");
+        if let Some(pr_nodes) = pr_conn
+            .and_then(|c| c.pointer("/nodes"))
             .and_then(|n| n.as_array())
         {
             for pr in pr_nodes {
@@ -379,14 +457,47 @@ pub(crate) fn ingest_org_repositories_response(
                     items.push(item);
                 }
             }
+            if pr_conn
+                .and_then(|c| c.pointer("/pageInfo/hasNextPage"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                if let Some(cursor) = pr_conn
+                    .and_then(|c| c.pointer("/pageInfo/endCursor"))
+                    .and_then(|v| v.as_str())
+                {
+                    pending.push(PendingRepoPagination {
+                        repo: repo_name.to_string(),
+                        kind: RepoItemPageKind::PullRequests,
+                        after: cursor.to_string(),
+                    });
+                }
+            }
         }
-        if let Some(issue_nodes) = repo_node
-            .pointer("/issues/nodes")
+        let issue_conn = repo_node.get("issues");
+        if let Some(issue_nodes) = issue_conn
+            .and_then(|c| c.pointer("/nodes"))
             .and_then(|n| n.as_array())
         {
             for issue in issue_nodes {
                 if let Some(item) = parse_issue_in_repo(issue, &org.name, repo_name) {
                     items.push(item);
+                }
+            }
+            if issue_conn
+                .and_then(|c| c.pointer("/pageInfo/hasNextPage"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                if let Some(cursor) = issue_conn
+                    .and_then(|c| c.pointer("/pageInfo/endCursor"))
+                    .and_then(|v| v.as_str())
+                {
+                    pending.push(PendingRepoPagination {
+                        repo: repo_name.to_string(),
+                        kind: RepoItemPageKind::Issues,
+                        after: cursor.to_string(),
+                    });
                 }
             }
         }
@@ -410,7 +521,21 @@ pub(crate) fn ingest_org_repositories_response(
         has_next,
         end_cursor,
         organization_missing: false,
+        pending,
     })
+}
+
+fn accumulate_rate_limit(total: &mut Option<RateLimitInfo>, part: Option<RateLimitInfo>) {
+    if let Some(p) = part {
+        match total {
+            None => *total = Some(p),
+            Some(t) => {
+                t.cost += p.cost;
+                t.remaining = p.remaining;
+                t.reset_at = p.reset_at;
+            }
+        }
+    }
 }
 
 fn parse_rate_limit(rl: &serde_json::Value) -> RateLimitInfo {
@@ -469,6 +594,12 @@ async fn post_graphql(
     if status == 403 || status == 429 {
         return Err(classify_http_error(status, &headers, &text));
     }
+    if status >= 500 && status < 600 {
+        return Err(GraphqlError::Network(format!(
+            "GitHub GraphQL HTTP {status}: {}",
+            truncate_body(&text)
+        )));
+    }
     if !(200..300).contains(&status) {
         return Err(GraphqlError::Forbidden {
             status,
@@ -477,6 +608,126 @@ async fn post_graphql(
     }
 
     serde_json::from_str(&text).map_err(|e| GraphqlError::GraphQl(e.to_string()))
+}
+
+async fn fetch_repo_item_page(
+    client: &reqwest::Client,
+    token: &str,
+    org: &OrgConfig,
+    pending: &PendingRepoPagination,
+) -> Result<(Vec<RawItem>, Option<RateLimitInfo>, Vec<PendingRepoPagination>), GraphqlError> {
+    let (query, variables) = match pending.kind {
+        RepoItemPageKind::PullRequests => (
+            REPO_PR_PAGE_QUERY,
+            serde_json::json!({
+                "owner": org.name,
+                "name": pending.repo,
+                "after": pending.after,
+            }),
+        ),
+        RepoItemPageKind::Issues => (
+            REPO_ISSUE_PAGE_QUERY,
+            serde_json::json!({
+                "owner": org.name,
+                "name": pending.repo,
+                "after": pending.after,
+            }),
+        ),
+    };
+    let json = post_graphql(client, token, query, variables).await?;
+    let rate_limit = json.pointer("/data/rateLimit").map(parse_rate_limit);
+    let warning = json.get("errors").map(|e| e.to_string());
+    let mut items = Vec::new();
+    let mut more = Vec::new();
+    let conn_path = match pending.kind {
+        RepoItemPageKind::PullRequests => "/data/repository/pullRequests",
+        RepoItemPageKind::Issues => "/data/repository/issues",
+    };
+    let conn = json.pointer(conn_path).ok_or_else(|| {
+        GraphqlError::GraphQl(format!("missing repository connection for {}", pending.repo))
+    })?;
+    if let Some(nodes) = conn.pointer("/nodes").and_then(|n| n.as_array()) {
+        for node in nodes {
+            let item = match pending.kind {
+                RepoItemPageKind::PullRequests => parse_pr_in_repo(node, &org.name, &pending.repo),
+                RepoItemPageKind::Issues => parse_issue_in_repo(node, &org.name, &pending.repo),
+            };
+            if let Some(item) = item {
+                items.push(item);
+            }
+        }
+    }
+    if conn
+        .pointer("/pageInfo/hasNextPage")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        if let Some(cursor) = conn
+            .pointer("/pageInfo/endCursor")
+            .and_then(|v| v.as_str())
+        {
+            more.push(PendingRepoPagination {
+                repo: pending.repo.clone(),
+                kind: pending.kind.clone(),
+                after: cursor.to_string(),
+            });
+        }
+    }
+    if warning.is_some() {
+        log::debug!("github graphql repo page warning: {:?}", warning);
+    }
+    Ok((items, rate_limit, more))
+}
+
+fn pr_needs_failure_contexts(item: &RawItem) -> bool {
+    item.kind == ItemKind::Pr
+        && matches!(
+            item.ci.as_ref().and_then(|c| c.state.as_deref()),
+            Some("FAILURE") | Some("ERROR")
+        )
+}
+
+async fn enrich_failure_contexts(
+    client: &reqwest::Client,
+    token: &str,
+    org: &str,
+    items: &mut [RawItem],
+    total_rate: &mut Option<RateLimitInfo>,
+) -> Result<(), GraphqlError> {
+    for item in items.iter_mut() {
+        if !pr_needs_failure_contexts(item) {
+            continue;
+        }
+        let variables = serde_json::json!({
+            "owner": org,
+            "name": item.repo,
+            "number": item.number,
+        });
+        let json = post_graphql(client, token, PR_FAILURE_CONTEXTS_QUERY, variables).await?;
+        accumulate_rate_limit(
+            total_rate,
+            json.pointer("/data/rateLimit").map(parse_rate_limit),
+        );
+        if let Some(errors) = json.get("errors") {
+            log::debug!(
+                "failure contexts skipped for {}/{}#{}: {}",
+                org,
+                item.repo,
+                item.number,
+                errors
+            );
+            continue;
+        }
+        let rollup = json.pointer(
+            "/data/repository/pullRequest/commits/nodes/0/commit/statusCheckRollup",
+        );
+        if let Some(rollup) = rollup {
+            if let Some(ci) = parse_rollup(rollup) {
+                item.ci = Some(ci);
+            }
+        }
+    }
+    Ok(())
 }
 
 pub async fn fetch_org_open_items(
@@ -493,11 +744,12 @@ pub async fn fetch_org_open_items(
 
     let mut after: Option<String> = None;
     let mut all_items = Vec::new();
-    let mut last_rate: Option<RateLimitInfo> = None;
+    let mut total_rate: Option<RateLimitInfo> = None;
     let mut warning: Option<String> = None;
     let mut repos_visible = 0u32;
     let mut total_repos: Option<u32> = None;
     let mut organization_missing = false;
+    let mut pending_pages: Vec<PendingRepoPagination> = Vec::new();
 
     loop {
         let variables = serde_json::json!({
@@ -518,13 +770,12 @@ pub async fn fetch_org_open_items(
             break;
         }
         all_items.extend(page.items);
+        pending_pages.extend(page.pending);
         repos_visible += page.repos_in_page;
         if page.total_repo_count.is_some() {
             total_repos = page.total_repo_count;
         }
-        if page.rate_limit.is_some() {
-            last_rate = page.rate_limit;
-        }
+        accumulate_rate_limit(&mut total_rate, page.rate_limit);
         if page.warning.is_some() {
             warning = page.warning;
         }
@@ -537,6 +788,26 @@ pub async fn fetch_org_open_items(
             break;
         }
     }
+
+    while let Some(pending) = pending_pages.pop() {
+        let (items, rate, more) = fetch_repo_item_page(client, token, org, &pending).await?;
+        all_items.extend(items);
+        pending_pages.extend(more);
+        accumulate_rate_limit(&mut total_rate, rate);
+    }
+
+    enrich_failure_contexts(client, token, &org.name, &mut all_items, &mut total_rate).await?;
+
+    if let Some(rl) = &total_rate {
+        log::info!(
+            "github graphql org={} poll_cost={} remaining={}",
+            org.name,
+            rl.cost,
+            rl.remaining
+        );
+    }
+
+    let last_rate = total_rate;
 
     if organization_missing {
         return Err(GraphqlError::GraphQl(format!(
@@ -601,7 +872,7 @@ pub async fn fetch_all_orgs(
     for org in &config.orgs {
         let result = fetch_org_open_items(client, token, org).await?;
         combined.extend(result.items);
-        rate_limit = result.rate_limit;
+        accumulate_rate_limit(&mut rate_limit, result.rate_limit);
         repos_visible += result.repos_visible;
         if result.warning.is_some() {
             warning = result.warning;
@@ -791,6 +1062,44 @@ mod tests {
         assert_eq!(page.issue_count, Some(42));
         let hint = suspicious_search_result(&json, page.items.len());
         assert!(hint.is_some());
+    }
+
+    #[test]
+    fn http_502_is_not_forbidden() {
+        let err = {
+            let status = 502u16;
+            if status >= 500 && status < 600 {
+                GraphqlError::Network("x".to_string())
+            } else {
+                GraphqlError::Forbidden {
+                    status,
+                    message: "x".to_string(),
+                }
+            }
+        };
+        assert!(matches!(err, GraphqlError::Network(_)));
+    }
+
+    #[test]
+    fn accumulate_rate_limit_sums_cost() {
+        let mut total = None;
+        accumulate_rate_limit(
+            &mut total,
+            Some(RateLimitInfo {
+                cost: 4,
+                remaining: 100,
+                reset_at: "t".to_string(),
+            }),
+        );
+        accumulate_rate_limit(
+            &mut total,
+            Some(RateLimitInfo {
+                cost: 1,
+                remaining: 99,
+                reset_at: "t".to_string(),
+            }),
+        );
+        assert_eq!(total.as_ref().map(|t| t.cost), Some(5));
     }
 
     #[test]

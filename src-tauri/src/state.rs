@@ -6,6 +6,7 @@ use chrono::Utc;
 use crate::config::AppConfig;
 use crate::fixture::load_checked_in_items;
 use crate::model::{build_dashboard, DashboardSnapshot};
+use crate::etag_probe::EtagStore;
 use crate::poll::PollRuntime;
 use crate::snapshot::load_snapshot_file;
 
@@ -19,6 +20,7 @@ pub struct AppState {
     pub offline: Mutex<bool>,
     pub banner: Mutex<Option<String>>,
     pub poll_runtime: Arc<PollRuntime>,
+    pub etag_store: EtagStore,
 }
 
 impl AppState {
@@ -33,16 +35,22 @@ impl AppState {
         let dashboard = if fixture_mode {
             let items = load_checked_in_items();
             let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            build_dashboard(items, &config, &fetched_at)
+            build_dashboard(items, &config, &fetched_at, None, None)
         } else if let Some(path) = snapshot_path.as_ref() {
             load_snapshot_file(path).unwrap_or_else(|| {
                 let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                build_dashboard(vec![], &config, &fetched_at)
+                build_dashboard(vec![], &config, &fetched_at, None, None)
             })
         } else {
             let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            build_dashboard(vec![], &config, &fetched_at)
+            build_dashboard(vec![], &config, &fetched_at, None, None)
         };
+        let etag_store = EtagStore::load(
+            config_path
+                .parent()
+                .map(|p| crate::etag_probe::etag_store_path(p))
+                .unwrap_or_else(|| config_path.with_extension("etag-store.json")),
+        );
         Self {
             config: Mutex::new(config),
             config_path,
@@ -53,6 +61,7 @@ impl AppState {
             offline: Mutex::new(false),
             banner: Mutex::new(None),
             poll_runtime,
+            etag_store,
         }
     }
 
@@ -84,7 +93,7 @@ impl AppState {
         let config = self.config.lock().map(|c| c.clone()).unwrap_or_default();
         let items = load_checked_in_items();
         let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let snapshot = build_dashboard(items, &config, &fetched_at);
+        let snapshot = build_dashboard(items, &config, &fetched_at, None, None);
         self.set_dashboard(snapshot);
     }
 }

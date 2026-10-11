@@ -12,15 +12,29 @@ use crate::pause::{is_polling_paused, pause_tooltip};
 use crate::popover_anchor::{
     logical_position_tauri, physical_tray_rect, popover_logical_position, PhysicalTrayRect,
 };
+use crate::config::DEFAULT_POLL_INTERVAL;
 use crate::poll::{run_poll_cycle, update_config_and_save};
 use crate::state::AppState;
 
 fn tray_pause_info<R: Runtime>(app: &tauri::AppHandle<R>) -> (bool, String) {
     if let Some(state) = app.try_state::<Arc<AppState>>() {
-        if let Ok(guard) = state.config.lock() {
-            let paused = is_polling_paused(&guard.poll_pause);
-            return (paused, pause_tooltip(&guard.poll_pause));
-        }
+        let user_paused = state
+            .config
+            .lock()
+            .map(|guard| is_polling_paused(&guard.poll_pause))
+            .unwrap_or(false);
+        let idle_paused = state.poll_runtime.is_idle_paused();
+        let paused = user_paused || idle_paused;
+        let tip = if idle_paused && !user_paused {
+            "Polling paused while idle".to_string()
+        } else {
+            state
+                .config
+                .lock()
+                .map(|guard| pause_tooltip(&guard.poll_pause))
+                .unwrap_or_else(|_| "Polling paused".to_string())
+        };
+        return (paused, tip);
     }
     (false, "Polling".to_string())
 }
@@ -173,7 +187,7 @@ fn maybe_refresh_stale_snapshot<R: Runtime>(app: &tauri::AppHandle<R>) {
             .config
             .lock()
             .map(|c| c.poll_interval_seconds)
-            .unwrap_or(30);
+            .unwrap_or(DEFAULT_POLL_INTERVAL);
         let stale = state
             .dashboard
             .lock()
@@ -190,7 +204,7 @@ pub fn trigger_refresh<R: Runtime>(app: &tauri::AppHandle<R>, force: bool) {
     tauri::async_runtime::spawn(async move {
         if let Some(state) = app_handle.try_state::<Arc<AppState>>() {
             let client = reqwest::Client::new();
-            let _ = run_poll_cycle(&app_handle, state.inner(), &client, force).await;
+            let _ = run_poll_cycle(&app_handle, state.inner(), &client, force, force).await;
         }
     });
 }
@@ -213,6 +227,15 @@ pub fn sync_tray_from_snapshot<R: Runtime>(app: &tauri::AppHandle<R>, snapshot: 
             });
             let _ = tray.set_tooltip(Some(snapshot.tray_tooltip.clone()));
         }
+    }
+}
+
+pub fn sync_tray_paused_with_tooltip<R: Runtime>(app: &tauri::AppHandle<R>, tooltip: &str) {
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let _ = tray.set_icon(Some(ICON_PAUSED.clone()));
+        let _ = tray.set_icon_as_template(true);
+        let _ = tray.set_title(Some("Paused"));
+        let _ = tray.set_tooltip(Some(tooltip.to_string()));
     }
 }
 

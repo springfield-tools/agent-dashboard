@@ -1,6 +1,6 @@
 # Agent Dashboard — implementation plan
 
-Menu-bar app for Bryan Hunt that shows in-flight GitHub work across his orgs. It polls on a configurable interval that defaults to 30 seconds, and he can pause polling from the tray. This document is the plan only. A follow-up agent implements it after review.
+Menu-bar app for Bryan Hunt that shows in-flight GitHub work across his orgs. It polls on a configurable interval that defaults to 60 seconds, and he can pause polling from the tray. This document is the plan only. A follow-up agent implements it after review.
 
 The daily morning summary stays outside this repo. This app writes a versioned snapshot file the summary can read, so the two do not each invent a GitHub client.
 
@@ -13,7 +13,7 @@ Local checkouts, used in every setup and test step below:
 
 ## Recommendation
 
-Build a Tauri 2 macOS tray app. Rust owns polling, the keychain, and grouping. Vue 3 renders one popover. The first phases ship a fine-grained read-only personal access token in the macOS Keychain. A later phase adds issue and pull-request write so a row can change labels and post a comment. Poll with one GitHub GraphQL **organization.repositories** fetch per org (fine-grained PATs cannot rely on org search). The interval is a setting in the config file and in the popover, default 30 seconds, allowed range 15 seconds to 15 minutes. Read CI from `statusCheckRollup`. Pause and resume from the tray menu or the popover, including "for 1 hour" and "until tomorrow". The icon shows a paused state while polling is stopped. Keep the bot filter configurable, defaulting to a collapsed Dependabot row that still surfaces failing bot PRs.
+Build a Tauri 2 macOS tray app. Rust owns polling, the keychain, and grouping. Vue 3 renders one popover. The first phases ship a fine-grained read-only personal access token in the macOS Keychain. A later phase adds issue and pull-request write so a row can change labels and post a comment. Poll with one GitHub GraphQL **organization.repositories** fetch per org (fine-grained PATs cannot rely on org search). The interval is a setting in the config file and in the popover, default 60 seconds, allowed range 15 seconds to 15 minutes. Read CI from `statusCheckRollup`. Pause and resume from the tray menu or the popover, including "for 1 hour" and "until tomorrow". The icon shows a paused state while polling is stopped. Keep the bot filter configurable, defaulting to a collapsed Dependabot row that still surfaces failing bot PRs.
 
 ## Snapshot of the data (2026-10-10)
 
@@ -67,7 +67,7 @@ A borderless, always-on-top window anchored to the tray icon, about 400 by 560 p
 
 Each section header is the group name and the count (`Needs testing · 2`).
 
-Header of the window: time of the last successful fetch, the active interval (for example `every 30s`), a refresh control, a pause control, and a one-line banner when the last poll failed or polling is paused. The banner sits above the last good snapshot. The app keeps showing that snapshot until a poll succeeds. Refresh while paused fetches once and leaves the pause in place.
+Header of the window: time of the last successful fetch, the active interval (for example `every 1m`), a refresh control, a pause control, and a one-line banner when the last poll failed or polling is paused. The banner sits above the last good snapshot. The app keeps showing that snapshot until a poll succeeds. Refresh while paused fetches once and leaves the pause in place.
 
 The pause control is one click to pause and one click to resume. Its menu has the same extra choices as the tray menu: Pause for 1 hour, and Pause until tomorrow.
 
@@ -139,7 +139,7 @@ Activate a row and the app opens `html_url` with the Tauri opener plugin (the sy
 
 ### Query
 
-One GraphQL **organization.repositories** query per configured org (paginated), every `poll_interval_seconds` (default 30, minimum 15, maximum 900), to `https://api.github.com/graphql`. Fine-grained PATs often cannot use `search(query: "org:…")` (HTTP 200 with errors and empty nodes); the app lists org repos and loads open pull requests and issues per repo instead. The popover interval control writes that same key.
+One GraphQL **organization.repositories** query per configured org (paginated), every `poll_interval_seconds` (default 60, minimum 15, maximum 900), to `https://api.github.com/graphql`. Fine-grained PATs often cannot use `search(query: "org:…")` (HTTP 200 with errors and empty nodes); the app lists org repos and loads open pull requests and issues per repo instead. The popover interval control writes that same key.
 
 ```graphql
 query Dashboard($searchQuery: String!, $after: String) {
@@ -200,39 +200,39 @@ with `If-None-Match` set to the stored ETag and `Accept: application/vnd.github+
 
 That probe sees label, title, and open/closed changes. It does not see CI. Check-run completion does not change the issues list, which is why a 304 can arrive while `statusCheckRollup` flips from `PENDING` to `FAILURE`.
 
-So the probe is implemented and defaulted off (`use_etag_probe = false`). With the default, every tick runs GraphQL and CI stays within the configured interval, 30 seconds unless Bryan changes it.
+So the probe is implemented and defaulted off (`use_etag_probe = false`). With the default, every tick runs GraphQL and CI stays within the configured interval, 60 seconds unless Bryan changes it.
 
-When the probe is turned on, a tick skips GraphQL only if every repo returned 304 and the last GraphQL snapshot is younger than `ci_max_staleness_seconds`. The default staleness is 30 seconds, matching the default interval, which means the probe will not skip anything until that value is raised above the interval. Lengthening the poll interval on its own does not enable skips. Raising staleness to 300 trades up to five minutes of CI lag for a much smaller GraphQL bill. The popover tooltip should say when CI may be that stale.
+When the probe is turned on, a tick skips GraphQL only if every repo returned 304 and the last GraphQL snapshot is younger than `ci_max_staleness_seconds`. The default staleness is 60 seconds, matching the default interval, which means the probe will not skip anything until that value is raised above the interval. Lengthening the poll interval on its own does not enable skips. Raising staleness to 300 trades up to five minutes of CI lag for a much smaller GraphQL bill. The popover tooltip should say when CI may be that stale.
 
 Repo names for the probe come from the config include list. When include is empty, `GET /orgs/{org}/repos?per_page=100` runs at most once an hour, itself with an ETag, and the name list is cached.
 
 ### Rate-limit budget
 
-Measured on 2026-10-10: the search above, first 50 nodes, cost 2 GraphQL points. Primary GraphQL limit on a user token is 5,000 points per hour. REST core is also 5,000 per hour. REST search is a separate budget of 30 requests per minute; this design does not use it. Authenticated requests are required. Unauthenticated GraphQL is 60 points per hour, which cannot sustain even the slowest allowed interval.
+Measured on 2026-10-11 (live `rateLimit.cost` via `scripts/measure-graphql-cost.sh`): one cheap **`organization.repositories`** page for `springfield-ham-radio` (12 repos, 33 open PRs/issues, no extra repo/PR/issue pages, no failure-context follow-ups) cost **4** GraphQL points per tick. Each failing PR adds about **1** point when `contexts(first: 10)` is fetched. Repo/PR/issue pagination adds another org or repo page at roughly **4** points each when limits are exceeded. Primary GraphQL limit on a user token is 5,000 points per hour (shared with `gh` and other tools). REST core is also 5,000 per hour.
 
-Points per hour for one page:
+Points per hour for the measured steady-state tick:
 
-`orgs × cost_per_query × (3600 / poll_interval_seconds)`
+`cost_per_tick × (3600 / poll_interval_seconds)`
 
-A second page in the same tick doubles that org's cost. The measured cost is 2 points per org. The headroom column uses 10 points per org, for extra fields or a second page.
+The headroom column uses **8** points per tick (extra failure-context queries, pagination, or heavier rollups).
 
-| Interval | Ticks per hour | 1 org at 2 pts | Share of 5,000 | 1 org at 10 pts | Share of 5,000 | N orgs at 2 pts | N orgs at 10 pts |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 15s | 240 | 480 | 9.6% | 2,400 | 48% | 480 × N | 2,400 × N |
-| 30s (default) | 120 | 240 | 4.8% | 1,200 | 24% | 240 × N | 1,200 × N |
-| 60s | 60 | 120 | 2.4% | 600 | 12% | 120 × N | 600 × N |
-| 120s | 30 | 60 | 1.2% | 300 | 6% | 60 × N | 300 × N |
+| Interval | Ticks per hour | 4 pts/tick (measured) | Share of 5,000 | 8 pts/tick (headroom) | Share of 5,000 |
+| --- | --- | --- | --- | --- | --- |
+| 15s | 240 | 960 | 19.2% | 1,920 | 38.4% |
+| 30s | 120 | 480 | 9.6% | 960 | 19.2% |
+| 60s (default) | 60 | 240 | 4.8% | 480 | 9.6% |
+| 120s | 30 | 120 | 2.4% | 240 | 4.8% |
 
-How many orgs fit under 5,000 points at one page:
+How many orgs fit under 5,000 points at one measured page each:
 
-| Interval | Orgs at the measured 2 points | Orgs at the 10-point headroom |
+| Interval | Orgs at 4 pts/tick | Orgs at 8 pts/tick (headroom) |
 | --- | --- | --- |
-| 15s | 10 (4,800). An 11th org crosses the limit | 2 (4,800). A 3rd org crosses the limit |
-| 30s | 20 (4,800). A 21st org crosses the limit | 4 (4,800). A 5th org crosses the limit |
-| 60s | 41 (4,920). A 42nd org crosses the limit | 8 (4,800). A 9th org crosses the limit |
-| 120s | 83 (4,980). An 84th org crosses the limit | 16 (4,800). A 17th org crosses the limit |
+| 15s | 5 (4,800). A 6th org crosses the limit | 2 (3,840). A 3rd org crosses the limit |
+| 30s | 10 (4,800). An 11th org crosses the limit | 5 (4,800). A 6th org crosses the limit |
+| 60s | 20 (4,800). A 21st org crosses the limit | 10 (4,800). An 11th org crosses the limit |
+| 120s | 41 (4,920). A 42nd org crosses the limit | 20 (4,800). A 21st org crosses the limit |
 
-The default, one org at 30 seconds and the measured cost, is 240 points per hour (4.8%). Two orgs at that default are 480 points (9.6%). Several thousand points remain for `gh` on the same token. The app reads `rateLimit` on every GraphQL response and `X-RateLimit-Remaining` / `X-RateLimit-Reset` on every REST response.
+The default, one org at 60 seconds and the measured 4-point cost, is **240** points per hour (4.8%). The automatic brake slows the live interval when `cost × (3600 / poll_interval_seconds) > 2,500`. A future **pushedAt-gated** incremental fetch (cheap repo list every tick, full payload only for repos that moved) could approach a lower steady-state GraphQL bill; that is not implemented in Phase 4. The app reads `rateLimit` on every GraphQL response and shows `pts/poll · remaining` in the popover footer.
 
 The REST ETag probe, when enabled, is one call per repo per tick and spends no primary points on a 304. At 12 repos that is 48 calls per minute at 15 seconds, 24 at 30 seconds, 12 at 60 seconds, and 6 at 120 seconds. All of those sit under the rough secondary ceiling of about 90 requests per minute. The poller never runs a second poll concurrently. One GraphQL request in flight at a time. A 200 from the probe costs 1 core point for that repo.
 
@@ -300,8 +300,8 @@ Tauri's app config dir is the Application Support path above. First launch write
 # ~/Library/Application Support/com.springfield.agent-dashboard/config.toml
 
 # Also edited from the popover presets (15s, 30s, 1m, 2m).
-# Allowed range is 15 to 900 seconds (15 minutes). Default 30.
-poll_interval_seconds = 30
+# Allowed range is 15 to 900 seconds (15 minutes). Default 60.
+poll_interval_seconds = 60
 
 # Written by Pause / Resume. Omit the key, or set "running", to poll.
 # "manual" stays paused until Resume. An RFC3339 timestamp resumes then.
@@ -316,7 +316,7 @@ idle_pause_after_seconds = 300
 # than ci_max_staleness_seconds. Leave the probe off to keep CI within
 # poll_interval_seconds. Check runs do not change the issues-list ETag.
 use_etag_probe = false
-ci_max_staleness_seconds = 30
+ci_max_staleness_seconds = 60
 
 [github]
 # "keychain" reads the fine-grained PAT. "gh" shells out to `gh auth token`.
@@ -577,7 +577,7 @@ Confirm the icon, the popover, and Quit. Push a draft PR and confirm the check n
 **Acceptance:**
 
 - With a valid token, the popover matches GitHub within one poll: the two human drafts, the collapsed Dependabot row (29 green, 2 with no CI), and zero rows in the four label groups.
-- The header shows the default interval of 30 seconds. Choosing 60 seconds writes `~/Library/Application Support/com.springfield.agent-dashboard/config.toml` and the following gap is 60 seconds. A value under 15 or over 900 is rejected and the previous interval keeps running.
+- The header shows the default interval of 60 seconds. Choosing 30 seconds writes `~/Library/Application Support/com.springfield.agent-dashboard/config.toml` and the following gap is 30 seconds. A value under 15 or over 900 is rejected and the previous interval keeps running.
 - Pause stops GitHub calls, switches the tray icon to the pause mark, and replaces the count title with `Paused`. Resume clears `poll_pause` and fetches immediately. Pause for 1 hour and Pause until tomorrow (next local midnight) survive quit and relaunch and then resume on their own.
 - Refresh while paused fetches once and leaves the pause in place.
 - `snapshot.json` `schemaVersion` is 1 and contains no token.
@@ -602,7 +602,7 @@ From the same checkout, set the popover interval to 1m and confirm the config fi
 **Acceptance:**
 
 - Airplane mode (or a denied network) leaves the last snapshot up, with the offline banner, and recovers on the next success without a burst of parallel polls.
-- Closing the lid for a minute and reopening refreshes once, then returns to the configured interval (default 30 seconds). The icon stays the normal mark across that wake.
+- Closing the lid for a minute and reopening refreshes once, then returns to the configured interval (default 60 seconds). The icon stays the normal mark across that wake.
 - Closing the lid while Pause for 1 hour is active wakes still paused, with no GitHub call.
 - `pause_when_idle = true` and `idle_pause_after_seconds = 10` stops polls after 10 seconds with no input, shows the paused icon with the idle tooltip, and resumes on the next key or mouse event. A manual pause is not cleared by that input.
 - Setting `use_etag_probe = true` and `ci_max_staleness_seconds = 300` skips GraphQL while the issues lists 304, and the popover says CI may be up to five minutes old.

@@ -1,12 +1,17 @@
+mod backoff;
+mod brakes;
 mod config;
 mod credential;
+mod etag_probe;
 mod fixture;
 mod github;
+mod idle;
 mod keychain;
 mod model;
 mod pause;
 mod poll;
 mod popover_anchor;
+mod power;
 mod snapshot;
 mod state;
 
@@ -74,7 +79,14 @@ fn config_status(state: tauri::State<'_, Arc<AppState>>) -> ConfigStatus {
         .and_then(|g| g.clone());
     let offline = state.offline.lock().map(|g| *g).unwrap_or(false);
     let banner = state.banner.lock().ok().and_then(|g| g.clone());
-    let polling_paused = is_polling_paused(&config.poll_pause);
+    let user_paused = is_polling_paused(&config.poll_pause);
+    let idle_paused = state.poll_runtime.is_idle_paused();
+    let polling_paused = user_paused || idle_paused;
+    let pause_tooltip = if idle_paused && !user_paused {
+        "Polling paused while idle".to_string()
+    } else {
+        pause_tooltip(&config.poll_pause)
+    };
     ConfigStatus {
         config_path: state.config_path.display().to_string(),
         config_error,
@@ -82,7 +94,7 @@ fn config_status(state: tauri::State<'_, Arc<AppState>>) -> ConfigStatus {
         bot_filter: bot_filter.to_string(),
         fixture_mode: state.fixture_mode,
         polling_paused,
-        pause_tooltip: pause_tooltip(&config.poll_pause),
+        pause_tooltip,
         has_github_token: credential_is_ready(&config),
         credential_source: credential_source_label(&config).to_string(),
         auth_error,
@@ -155,7 +167,7 @@ fn refresh_now(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Result
         let state = state.inner().clone();
         tauri::async_runtime::spawn(async move {
             let client = reqwest::Client::new();
-            let _ = poll::run_poll_cycle(&app, &state, &client, true).await;
+            let _ = poll::run_poll_cycle(&app, &state, &client, true, true).await;
         });
     }
     Ok(())
@@ -210,6 +222,11 @@ pub fn run(fixture_mode: bool) {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             tray::setup(app.handle())?;
             if !fixture_mode {
+                power::install_wake_listener(
+                    app.handle().clone(),
+                    app_state.clone(),
+                    poll_runtime.clone(),
+                );
                 start_background_poll(app.handle().clone(), app_state.clone(), poll_runtime);
             }
         }

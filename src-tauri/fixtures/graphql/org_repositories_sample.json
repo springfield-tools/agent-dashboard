@@ -1,6 +1,6 @@
 {
   "data": {
-    "rateLimit": { "cost": 3, "remaining": 4997, "resetAt": "2026-10-10T13:00:00Z" },
+    "rateLimit": { "cost": 4, "remaining": 4997, "resetAt": "2026-10-10T13:00:00Z" },
     "organization": {
       "repositories": {
         "totalCount": 2,
@@ -10,6 +10,7 @@
             "name": "ham-radio-ui",
             "isArchived": false,
             "pullRequests": {
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
                 {
                   "number": 84,
@@ -24,8 +25,7 @@
                       {
                         "commit": {
                           "statusCheckRollup": {
-                            "state": "SUCCESS",
-                            "contexts": { "nodes": [] }
+                            "state": "SUCCESS"
                           }
                         }
                       }
@@ -35,14 +35,19 @@
               ]
             },
             "issues": {
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": []
             }
           },
           {
             "name": "ham-radio-docs",
             "isArchived": false,
-            "pullRequests": { "nodes": [] },
+            "pullRequests": {
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
+              "nodes": []
+            },
             "issues": {
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
               "nodes": [
                 {
                   "number": 7,

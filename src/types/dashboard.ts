@@ -47,6 +47,8 @@ export type DashboardSnapshot = {
   bots: BotFooter | null;
   trayTitle: string;
   trayTooltip: string;
+  graphqlPollCost?: number | null;
+  graphqlRemaining?: number | null;
 };
 
 export type ConfigStatus = {
@@ -63,6 +65,9 @@ export type ConfigStatus = {
   offline: boolean;
   banner: string | null;
 };
+
+/** Matches `DEFAULT_POLL_INTERVAL` in `src-tauri/src/config.rs`. */
+export const DEFAULT_POLL_INTERVAL_SECONDS = 60;
 
 export const POLL_INTERVAL_PRESETS = [
   { label: '15s', seconds: 15 },

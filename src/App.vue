@@ -14,6 +14,7 @@
         <template v-if="configStatus?.fixtureMode">Fixture ·</template>
         <template v-else-if="configStatus?.pollingPaused">Paused ·</template>
         updated {{ fetchedLabel }}
+        <template v-if="snapshot?.stale"> · CI may be stale</template>
         <template v-if="configStatus"> · every {{ intervalLabel }}</template>
       </span>
       <p v-if="configStatus?.configError" class="banner banner-error">
@@ -34,7 +35,7 @@
           Poll
           <select
             class="control-select"
-            :value="configStatus?.pollIntervalSeconds ?? 30"
+            :value="configStatus?.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS"
             @change="onIntervalChange"
           >
             <option v-for="preset in POLL_INTERVAL_PRESETS" :key="preset.seconds" :value="preset.seconds">
@@ -100,6 +101,7 @@
           · {{ snapshot.bots.failing }} failing
         </template>
       </button>
+      <span v-if="graphqlBudgetLabel" class="footer-budget">{{ graphqlBudgetLabel }}</span>
       <span v-if="configStatus" class="footer-path">{{ configStatus.configPath }}</span>
     </footer>
 
@@ -159,6 +161,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 import { formatRelativeTime } from './formatRelative';
 import {
+  DEFAULT_POLL_INTERVAL_SECONDS,
   POLL_INTERVAL_PRESETS,
   type ConfigStatus,
   type DashboardSnapshot,
@@ -203,8 +206,19 @@ const fetchedLabel = computed(() => {
   return formatRelativeTime(snapshot.value.fetchedAt);
 });
 
+const graphqlBudgetLabel = computed(() => {
+  const cost = snapshot.value?.graphqlPollCost;
+  const remaining = snapshot.value?.graphqlRemaining;
+  if (cost == null && remaining == null) {
+    return '';
+  }
+  const pts = cost != null ? `${cost} pts/poll` : '— pts/poll';
+  const left = remaining != null ? `${remaining.toLocaleString()} left` : '— left';
+  return `${pts} · ${left}`;
+});
+
 const intervalLabel = computed(() => {
-  const secs = configStatus.value?.pollIntervalSeconds ?? 30;
+  const secs = configStatus.value?.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS;
   const preset = POLL_INTERVAL_PRESETS.find((p) => p.seconds === secs);
   return preset?.label ?? `${secs}s`;
 });
