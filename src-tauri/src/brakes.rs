@@ -80,10 +80,10 @@ mod tests {
 
     #[test]
     fn slows_when_projected_hour_exceeds_cap() {
-        let slow = brake_slow_interval_for_cost(15, 30);
-        assert!(slow >= 30);
-        let outcome = apply_brakes(30, 15, Some(4000), None, slow);
-        assert!(outcome.sleep_secs >= 30);
+        let slow = brake_slow_interval_for_cost(14, 15);
+        assert_eq!(slow, 21);
+        let outcome = apply_brakes(15, 14, Some(4000), None, slow);
+        assert!(outcome.sleep_secs >= 21);
         assert!(outcome.banner.is_some());
     }
 
