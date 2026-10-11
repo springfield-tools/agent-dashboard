@@ -366,7 +366,10 @@
 
     <dialog v-if="settingsOpen" class="settings-sheet" open @click.self="settingsOpen = false">
       <div class="settings-panel" @click.stop>
-        <h2 class="settings-title">Settings</h2>
+        <header class="settings-panel-header">
+          <h2 class="settings-title">Settings</h2>
+        </header>
+        <div class="settings-panel-body">
         <p v-if="configStatus?.credentialSource === 'gh'" class="settings-hint">
           <code>credential = "gh"</code> in config: each poll runs
           <code>gh auth token</code> (searches PATH plus Homebrew paths). The token stays in memory
@@ -399,38 +402,43 @@
               </span>
             </h3>
             <template v-if="entry.credentialSource === 'keychain'">
-              <label class="settings-label">
-                GitHub token
-                <input
-                  v-model="tokenInputs[entry.name]"
-                  type="password"
-                  class="settings-input"
-                  autocomplete="off"
-                  :placeholder="`PAT for ${entry.name}`"
-                />
-              </label>
-              <div class="settings-actions">
-                <button type="button" class="btn-primary" @click="saveToken(entry.name)">
-                  Save token
-                </button>
-                <button
-                  v-if="entry.ready"
-                  type="button"
-                  class="btn-text"
-                  @click="clearToken(entry.name)"
-                >
-                  Remove token
-                </button>
+              <div class="org-token-row">
+                <label class="settings-label org-token-field">
+                  Token
+                  <input
+                    v-model="tokenInputs[entry.name]"
+                    type="password"
+                    class="settings-input"
+                    autocomplete="off"
+                    :placeholder="`PAT for ${entry.name}`"
+                  />
+                </label>
+                <div class="org-token-actions">
+                  <button type="button" class="btn-primary" @click="saveToken(entry.name)">
+                    Save
+                  </button>
+                  <button
+                    v-if="entry.ready"
+                    type="button"
+                    class="btn-text"
+                    @click="clearToken(entry.name)"
+                  >
+                    Remove
+                  </button>
+                </div>
               </div>
             </template>
           <p v-else class="settings-hint">
             Uses <code>gh auth token</code> for this org (shared CLI session).
           </p>
         </div>
-        <p v-if="tokenMessage" class="settings-message">{{ tokenMessage }}</p>
-        <div class="settings-actions">
-          <button type="button" class="btn-text" @click="settingsOpen = false">Close</button>
         </div>
+        <footer class="settings-panel-footer">
+          <p v-if="tokenMessage" class="settings-message">{{ tokenMessage }}</p>
+          <div class="settings-actions settings-panel-done">
+            <button type="button" class="btn-primary" @click="settingsOpen = false">Done</button>
+          </div>
+        </footer>
       </div>
     </dialog>
   </div>
