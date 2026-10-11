@@ -318,10 +318,10 @@ pub(crate) fn ingest_org_repositories_response(
     let rate_limit = json.pointer("/data/rateLimit").map(parse_rate_limit);
     let warning = json.get("errors").map(|errors| errors.to_string());
 
-    let organization_missing = matches!(
-        json.pointer("/data/organization"),
-        None | Some(v) if v.is_null()
-    );
+    let organization_missing = match json.pointer("/data/organization") {
+        None => true,
+        Some(v) => v.is_null(),
+    };
     if organization_missing {
         return Ok(OrgRepoPage {
             items: vec![],
