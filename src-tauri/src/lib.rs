@@ -16,6 +16,7 @@ mod row_actions;
 mod row_writes;
 mod snapshot;
 mod state;
+mod ui_state;
 mod write_state;
 
 #[cfg(target_os = "macos")]
@@ -26,8 +27,12 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config::{load_config, validate_poll_interval};
-use crate::credential::{credential_is_ready, credential_source_label};
-use crate::keychain::{delete_token, store_token};
+use crate::config::OrgConfig;
+use crate::credential::{
+    credential_is_ready, credential_source_label, org_credential_is_ready, org_credential_source_label,
+};
+use crate::keychain::{delete_token_for_org, store_token_for_org};
+use crate::ui_state::{load_ui_state, save_ui_state, set_org_collapsed, UiState};
 use crate::model::DashboardSnapshot;
 use crate::pause::{
     is_polling_paused, pause_for_one_hour_value, pause_manual_value,
@@ -42,6 +47,14 @@ use crate::state::AppState;
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+struct OrgAuthStatus {
+    name: String,
+    credential_source: String,
+    ready: bool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 struct ConfigStatus {
     config_path: String,
     config_error: Option<String>,
@@ -52,6 +65,8 @@ struct ConfigStatus {
     pause_tooltip: String,
     has_github_token: bool,
     credential_source: String,
+    orgs: Vec<OrgConfig>,
+    org_auth: Vec<OrgAuthStatus>,
     auth_error: Option<String>,
     offline: bool,
     banner: Option<String>,
@@ -105,6 +120,16 @@ fn config_status(state: tauri::State<'_, Arc<AppState>>) -> ConfigStatus {
     } else {
         pause_tooltip(&config.poll_pause)
     };
+    let org_auth = config
+        .orgs
+        .iter()
+        .map(|org| OrgAuthStatus {
+            name: org.name.clone(),
+            credential_source: org_credential_source_label(org, &config).to_string(),
+            ready: org_credential_is_ready(org, &config),
+        })
+        .collect();
+
     ConfigStatus {
         config_path: state.config_path.display().to_string(),
         config_error,
@@ -115,6 +140,8 @@ fn config_status(state: tauri::State<'_, Arc<AppState>>) -> ConfigStatus {
         pause_tooltip,
         has_github_token: credential_is_ready(&config),
         credential_source: credential_source_label(&config).to_string(),
+        orgs: config.orgs.clone(),
+        org_auth,
         auth_error,
         offline,
         banner,
@@ -122,13 +149,30 @@ fn config_status(state: tauri::State<'_, Arc<AppState>>) -> ConfigStatus {
 }
 
 #[tauri::command]
-fn store_github_token(token: String) -> Result<(), String> {
-    store_token(&token).map_err(|e| e.to_string())
+fn store_github_token(org: String, token: String) -> Result<(), String> {
+    store_token_for_org(&org, &token).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn clear_github_token() -> Result<(), String> {
-    delete_token().map_err(|e| e.to_string())
+fn clear_github_token(org: String) -> Result<(), String> {
+    delete_token_for_org(&org).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ui_state_cmd(state: tauri::State<'_, Arc<AppState>>) -> UiState {
+    state.ui_state.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+#[tauri::command]
+fn set_org_section_collapsed(
+    state: tauri::State<'_, Arc<AppState>>,
+    org: String,
+    collapsed: bool,
+) -> Result<(), String> {
+    let mut guard = state.ui_state.lock().map_err(|_| "ui state lock")?;
+    set_org_collapsed(&mut *guard, &org, collapsed);
+    save_ui_state(&state.ui_state_path, &*guard)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -261,6 +305,8 @@ pub fn run(fixture_mode: bool) {
             undo_row_action_cmd,
             retry_partial_write_cmd,
             write_ui_state_cmd,
+            ui_state_cmd,
+            set_org_section_collapsed,
         ]);
 
     builder = builder.setup(move |app| {

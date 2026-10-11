@@ -1,8 +1,11 @@
 use reqwest::header::{HeaderMap, RETRY_AFTER};
 use reqwest::Response;
 
+use std::collections::HashMap;
+
 use crate::config::{AppConfig, OrgConfig};
-use crate::model::{CiSnapshot, ItemKind, RawItem};
+use crate::credential::graphql_budget_key;
+use crate::model::{CiSnapshot, GraphqlBudgetLine, ItemKind, RawItem};
 
 /// Legacy search query (OAuth / classic tokens). Fine-grained PATs often cannot search orgs.
 pub fn legacy_search_query_string(org: &OrgConfig) -> String {
@@ -165,6 +168,7 @@ pub enum GraphqlError {
     Forbidden { status: u16, message: String },
 }
 
+#[derive(Clone)]
 pub struct RateLimitInfo {
     pub cost: i32,
     pub remaining: i32,
@@ -858,36 +862,143 @@ pub async fn fetch_org_open_items(
     })
 }
 
-pub async fn fetch_all_orgs(
+pub struct MultiOrgFetchResult {
+    pub items: Vec<RawItem>,
+    pub rate_limit: Option<RateLimitInfo>,
+    pub budgets: Vec<GraphqlBudgetLine>,
+    pub org_errors: HashMap<String, String>,
+    pub warning: Option<String>,
+    pub empty_hint: Option<String>,
+    pub repos_visible: u32,
+}
+
+fn merge_budget_line(
+    budgets: &mut HashMap<String, GraphqlBudgetLine>,
+    key: &str,
+    rate: Option<RateLimitInfo>,
+) {
+    if let Some(rl) = rate {
+        budgets
+            .entry(key.to_string())
+            .and_modify(|b| {
+                b.poll_cost += rl.cost;
+                b.remaining = b.remaining.min(rl.remaining);
+            })
+            .or_insert(GraphqlBudgetLine {
+                credential_key: key.to_string(),
+                poll_cost: rl.cost,
+                remaining: rl.remaining,
+            });
+    }
+}
+
+pub async fn fetch_all_orgs_multi(
     client: &reqwest::Client,
-    token: &str,
     config: &AppConfig,
-) -> Result<FetchResult, GraphqlError> {
+    token_for_org: impl Fn(&OrgConfig) -> Result<String, String>,
+) -> MultiOrgFetchResult {
     let mut combined = Vec::new();
     let mut rate_limit = None;
+    let mut budget_map: HashMap<String, GraphqlBudgetLine> = HashMap::new();
+    let mut org_errors = HashMap::new();
     let mut warning = None;
     let mut empty_hint = None;
     let mut repos_visible = 0u32;
 
     for org in &config.orgs {
-        let result = fetch_org_open_items(client, token, org).await?;
-        combined.extend(result.items);
-        accumulate_rate_limit(&mut rate_limit, result.rate_limit);
-        repos_visible += result.repos_visible;
-        if result.warning.is_some() {
-            warning = result.warning;
-        }
-        if result.empty_hint.is_some() && combined.is_empty() {
-            empty_hint = result.empty_hint;
+        let token = match token_for_org(org) {
+            Ok(t) => t,
+            Err(message) => {
+                org_errors.insert(org.name.clone(), message);
+                continue;
+            }
+        };
+        let budget_key = graphql_budget_key(org, config);
+        match fetch_org_open_items(client, &token, org).await {
+            Ok(result) => {
+                combined.extend(result.items);
+                accumulate_rate_limit(&mut rate_limit, result.rate_limit.clone());
+                merge_budget_line(&mut budget_map, &budget_key, result.rate_limit);
+                repos_visible += result.repos_visible;
+                if result.warning.is_some() {
+                    warning = result.warning;
+                }
+                if result.empty_hint.is_some() && combined.is_empty() {
+                    empty_hint = result.empty_hint;
+                }
+            }
+            Err(e) => {
+                let message = org_fetch_error_message(org, &e);
+                org_errors.insert(org.name.clone(), message);
+                log::warn!("org {} fetch failed: {}", org.name, e);
+            }
         }
     }
 
-    Ok(FetchResult {
+    let budgets: Vec<GraphqlBudgetLine> = config
+        .orgs
+        .iter()
+        .filter_map(|o| budget_map.get(&graphql_budget_key(o, config)).cloned())
+        .collect();
+
+    if !budget_map.is_empty() {
+        let reset_at = rate_limit
+            .as_ref()
+            .map(|r| r.reset_at.clone())
+            .unwrap_or_default();
+        rate_limit = Some(RateLimitInfo {
+            cost: budget_map.values().map(|b| b.poll_cost).sum(),
+            remaining: budget_map.values().map(|b| b.remaining).min().unwrap_or(0),
+            reset_at,
+        });
+    }
+
+    MultiOrgFetchResult {
         items: combined,
         rate_limit,
+        budgets,
+        org_errors,
         warning,
         empty_hint,
         repos_visible,
+    }
+}
+
+fn org_fetch_error_message(org: &OrgConfig, e: &GraphqlError) -> String {
+    match e {
+        GraphqlError::Unauthorized => format!(
+            "GitHub rejected the token for \"{}\" (401). Update the PAT in Settings or run `gh auth login`.",
+            org.name
+        ),
+        GraphqlError::Forbidden { status, .. } => format!(
+            "GitHub denied access to \"{}\" ({status}). Check PAT permissions and org approval.",
+            org.name
+        ),
+        GraphqlError::RateLimited { message, .. } => format!(
+            "Rate limited while fetching \"{}\": {message}",
+            org.name
+        ),
+        GraphqlError::Network(msg) => format!("Network error for \"{}\": {msg}", org.name),
+        GraphqlError::GraphQl(msg) => msg.clone(),
+    }
+}
+
+pub async fn fetch_all_orgs(
+    client: &reqwest::Client,
+    token: &str,
+    config: &AppConfig,
+) -> Result<FetchResult, GraphqlError> {
+    let multi = fetch_all_orgs_multi(client, config, |_| Ok(token.to_string())).await;
+    if multi.items.is_empty() && multi.org_errors.len() == config.orgs.len() && !config.orgs.is_empty() {
+        let first = multi.org_errors.values().next().cloned().unwrap_or_default();
+        return Err(GraphqlError::GraphQl(first));
+    }
+    Ok(FetchResult {
+        items: multi.items,
+        rate_limit: multi.rate_limit,
+        warning: multi.warning,
+        empty_hint: multi.empty_hint,
+        repos_visible: multi.repos_visible,
     })
 }
 
@@ -1037,6 +1148,7 @@ mod tests {
     fn legacy_search_query_includes_archived_false() {
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            credential: None,
             include: vec![],
             exclude: vec![],
         };
@@ -1054,6 +1166,7 @@ mod tests {
         .expect("json");
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            credential: None,
             include: vec![],
             exclude: vec![],
         };
@@ -1110,6 +1223,7 @@ mod tests {
         .expect("json");
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            credential: None,
             include: vec![],
             exclude: vec![],
         };
@@ -1127,6 +1241,7 @@ mod tests {
         .expect("json");
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            credential: None,
             include: vec!["ham-radio-ui".to_string()],
             exclude: vec![],
         };
@@ -1178,6 +1293,7 @@ mod tests {
     fn paginates_search_results() {
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            credential: None,
             include: vec![],
             exclude: vec![],
         };

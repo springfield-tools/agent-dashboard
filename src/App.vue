@@ -61,48 +61,130 @@
       </div>
     </header>
     <main class="sections">
-      <section v-for="group in snapshot?.groups ?? []" :key="group.id" class="section">
-        <h2 class="section-title">{{ group.title }} · {{ group.items.length }}</h2>
-        <div
-          v-for="row in group.items"
-          :key="`${row.repo}-${row.number}`"
-          class="row"
-          @contextmenu.prevent="onRowContextMenu($event, group.id, row)"
+      <template v-if="orgSections.length">
+        <details
+          v-for="orgSection in orgSections"
+          :key="orgSection.org"
+          class="org-section"
+          :open="!isOrgCollapsed(orgSection.org)"
+          @toggle="onOrgToggle(orgSection.org, $event)"
         >
-          <div class="row-surface">
-            <button type="button" class="row-button" @click="openRow(row.url)">
-              <span class="row-top">
-                <span class="row-top-meta">
-                  <span class="row-repo">{{ row.repo }}</span>
-                  <span class="row-number">#{{ row.number }}</span>
-                  <span v-if="row.draft" class="chip chip-kind">Draft</span>
-                  <span v-else class="chip chip-kind">{{ row.kind === 'pr' ? 'PR' : 'Issue' }}</span>
-                </span>
-              </span>
-              <span class="row-title">{{ row.title }}</span>
-              <span class="row-meta">
-                <span class="row-author">@{{ row.author }}</span>
-                <span class="row-time">{{ formatRelativeTime(row.updatedAt) }}</span>
-              </span>
-              <span v-if="row.chips.length" class="row-chips">
-                <span v-for="chip in row.chips" :key="chip.label" class="chip">{{ chip.label }}</span>
-              </span>
-            </button>
-            <button
-              v-if="!configStatus?.fixtureMode && rowMenuEntries(group.id).length"
-              type="button"
-              class="row-more"
-              :aria-label="`Actions for ${row.repo} #${row.number}`"
-              aria-haspopup="menu"
-              :aria-expanded="isContextMenuForRow(group.id, row)"
-              @click.stop="openContextMenu($event, group.id, row)"
+          <summary class="org-header">
+            <span class="org-chevron" aria-hidden="true">›</span>
+            <span class="org-name">{{ orgSection.org }}</span>
+            <span v-if="orgSection.trayTitle" class="org-counts">{{ orgSection.trayTitle }}</span>
+          </summary>
+          <p v-if="orgSection.authBanner" class="banner banner-warn org-auth-banner">
+            {{ orgSection.authBanner }}
+          </p>
+          <section
+            v-for="group in orgSection.groups"
+            :key="`${orgSection.org}-${group.id}`"
+            class="section"
+          >
+            <h2 class="section-title">{{ group.title }} · {{ group.items.length }}</h2>
+            <div
+              v-for="row in group.items"
+              :key="`${row.org}-${row.repo}-${row.number}`"
+              class="row"
+              @contextmenu.prevent="onRowContextMenu($event, group.id, row)"
             >
-              ⋯
-            </button>
+              <div class="row-surface">
+                <button type="button" class="row-button" @click="openRow(row.url)">
+                  <span class="row-top">
+                    <span class="row-top-meta">
+                      <span class="row-repo">{{ row.repo }}</span>
+                      <span class="row-number">#{{ row.number }}</span>
+                      <span :class="kindChipClass(row.kind, row.draft)">
+                        {{ row.draft ? 'Draft' : row.kind === 'pr' ? 'PR' : 'Issue' }}
+                      </span>
+                    </span>
+                  </span>
+                  <span class="row-title">{{ row.title }}</span>
+                  <span class="row-meta">
+                    <span class="row-author">@{{ row.author }}</span>
+                    <span class="row-time">{{ formatRelativeTime(row.updatedAt) }}</span>
+                  </span>
+                  <span v-if="row.chips.length" class="row-chips">
+                    <span
+                      v-for="chip in row.chips"
+                      :key="`${chip.label}-${chip.variant}`"
+                      :class="chipClass(chip.variant)"
+                    >
+                      {{ chip.label }}
+                    </span>
+                  </span>
+                </button>
+                <button
+                  v-if="!configStatus?.fixtureMode && rowMenuEntries(group.id).length"
+                  type="button"
+                  class="row-more"
+                  :aria-label="`Actions for ${row.repo} #${row.number}`"
+                  aria-haspopup="menu"
+                  :aria-expanded="isContextMenuForRow(group.id, row)"
+                  @click.stop="openContextMenu($event, group.id, row)"
+                >
+                  ⋯
+                </button>
+              </div>
+            </div>
+          </section>
+          <p v-if="!orgSection.groups.length && !orgSection.authBanner" class="empty org-empty">
+            No open items in this org.
+          </p>
+        </details>
+      </template>
+      <template v-else>
+        <section v-for="group in snapshot?.groups ?? []" :key="group.id" class="section">
+          <h2 class="section-title">{{ group.title }} · {{ group.items.length }}</h2>
+          <div
+            v-for="row in group.items"
+            :key="`${row.org}-${row.repo}-${row.number}`"
+            class="row"
+            @contextmenu.prevent="onRowContextMenu($event, group.id, row)"
+          >
+            <div class="row-surface">
+              <button type="button" class="row-button" @click="openRow(row.url)">
+                <span class="row-top">
+                  <span class="row-top-meta">
+                    <span class="row-repo">{{ row.repo }}</span>
+                    <span class="row-number">#{{ row.number }}</span>
+                    <span :class="kindChipClass(row.kind, row.draft)">
+                      {{ row.draft ? 'Draft' : row.kind === 'pr' ? 'PR' : 'Issue' }}
+                    </span>
+                  </span>
+                </span>
+                <span class="row-title">{{ row.title }}</span>
+                <span class="row-meta">
+                  <span class="row-author">@{{ row.author }}</span>
+                  <span class="row-time">{{ formatRelativeTime(row.updatedAt) }}</span>
+                </span>
+                <span v-if="row.chips.length" class="row-chips">
+                  <span
+                    v-for="chip in row.chips"
+                    :key="`${chip.label}-${chip.variant}`"
+                    :class="chipClass(chip.variant)"
+                  >
+                    {{ chip.label }}
+                  </span>
+                </span>
+              </button>
+              <button
+                v-if="!configStatus?.fixtureMode && rowMenuEntries(group.id).length"
+                type="button"
+                class="row-more"
+                :aria-label="`Actions for ${row.repo} #${row.number}`"
+                aria-haspopup="menu"
+                :aria-expanded="isContextMenuForRow(group.id, row)"
+                @click.stop="openContextMenu($event, group.id, row)"
+              >
+                ⋯
+              </button>
+            </div>
           </div>
-        </div>
-      </section>
-      <p v-if="!snapshot?.groups.length" class="empty">No open items in this view.</p>
+        </section>
+      </template>
+      <p v-if="!orgSections.length && !snapshot?.groups.length" class="empty">No open items in this view.</p>
     </main>
     <div v-if="writeUi?.undoAvailable" class="undo-bar">
       <button type="button" class="btn-text" @click="onUndo">Undo last action</button>
@@ -278,34 +360,53 @@
         </p>
         <template v-else>
           <p class="settings-hint">
-            Fine-grained PAT for resource owner springfield-ham-radio: Metadata and Commit
-            statuses (Read). Row actions need Issues and Pull requests <strong>Read and write</strong>.
-            Contents stays off. No Checks permission on fine-grained tokens. Org
-            may need to allow or approve the token. Stored in Keychain only — never in config or
+            Each org can use <code>credential = "keychain"</code> (per-org Keychain item) or
+            <code>credential = "gh"</code> on that <code>[[orgs]]</code> row. Fine-grained PATs need
+            Metadata and Commit statuses (Read); row actions need Issues and Pull requests
+            <strong>Read and write</strong>. Tokens stay in Keychain only — never in config or
             snapshot.
           </p>
-          <label class="settings-label">
-            GitHub token
-            <input
-              v-model="tokenInput"
-              type="password"
-              class="settings-input"
-              autocomplete="off"
-              placeholder="Paste fine-grained PAT once"
-            />
-          </label>
-          <p v-if="tokenMessage" class="settings-message">{{ tokenMessage }}</p>
-          <div class="settings-actions">
-            <button type="button" class="btn-primary" @click="saveToken">Save token</button>
-            <button
-              v-if="configStatus?.hasGithubToken"
-              type="button"
-              class="btn-text"
-              @click="clearToken"
-            >
-              Remove token
-            </button>
+          <div
+            v-for="entry in configStatus?.orgAuth ?? []"
+            :key="entry.name"
+            class="org-token-block"
+          >
+            <h3 class="settings-subtitle">
+              {{ entry.name }}
+              <span class="org-auth-pill" :class="{ ready: entry.ready }">
+                {{ entry.credentialSource }} · {{ entry.ready ? 'ready' : 'needs token' }}
+              </span>
+            </h3>
+            <template v-if="entry.credentialSource === 'keychain'">
+              <label class="settings-label">
+                GitHub token
+                <input
+                  v-model="tokenInputs[entry.name]"
+                  type="password"
+                  class="settings-input"
+                  autocomplete="off"
+                  :placeholder="`PAT for ${entry.name}`"
+                />
+              </label>
+              <div class="settings-actions">
+                <button type="button" class="btn-primary" @click="saveToken(entry.name)">
+                  Save token
+                </button>
+                <button
+                  v-if="entry.ready"
+                  type="button"
+                  class="btn-text"
+                  @click="clearToken(entry.name)"
+                >
+                  Remove token
+                </button>
+              </div>
+            </template>
+            <p v-else class="settings-hint">
+              Uses <code>gh auth token</code> for this org (shared CLI session).
+            </p>
           </div>
+          <p v-if="tokenMessage" class="settings-message">{{ tokenMessage }}</p>
         </template>
         <div class="settings-actions">
           <button type="button" class="btn-text" @click="settingsOpen = false">Close</button>
@@ -321,6 +422,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
+import { chipClass, kindChipClass } from './chipVariants';
 import { formatRelativeTime } from './formatRelative';
 import {
   computeContextMenuPosition,
@@ -331,10 +433,12 @@ import {
   DEFAULT_POLL_INTERVAL_SECONDS,
   POLL_INTERVAL_PRESETS,
   type ConfigStatus,
+  type DashboardOrgSection,
   type DashboardRow,
   type DashboardSnapshot,
   type RowActionKind,
   type RowActionPreview,
+  type UiState,
   type WriteUiState,
 } from './types/dashboard';
 
@@ -342,8 +446,9 @@ const snapshot = ref<DashboardSnapshot | null>(null);
 const configStatus = ref<ConfigStatus | null>(null);
 const writeUi = ref<WriteUiState | null>(null);
 const settingsOpen = ref(false);
-const tokenInput = ref('');
+const tokenInputs = ref<Record<string, string>>({});
 const tokenMessage = ref('');
+const uiState = ref<UiState>({ orgCollapsed: {} });
 const actionBanner = ref<string | null>(null);
 const actionSheetOpen = ref(false);
 const actionSheetMode = ref<RowActionKind | 'testingPassed'>('testingPassedReady');
@@ -382,9 +487,32 @@ async function reload(): Promise<void> {
     snapshot.value = await invoke<DashboardSnapshot>('dashboard_snapshot');
     configStatus.value = await invoke<ConfigStatus>('config_status');
     writeUi.value = await invoke<WriteUiState>('write_ui_state_cmd');
+    uiState.value = await invoke<UiState>('ui_state_cmd');
   } catch {
     snapshot.value = null;
   }
+}
+
+const orgSections = computed((): DashboardOrgSection[] => {
+  const sections = snapshot.value?.orgSections;
+  if (sections && sections.length > 0) {
+    return sections;
+  }
+  return [];
+});
+
+function isOrgCollapsed(org: string): boolean {
+  return uiState.value.orgCollapsed[org] === true;
+}
+
+function onOrgToggle(org: string, event: Event): void {
+  const details = event.target as HTMLDetailsElement;
+  const collapsed = !details.open;
+  uiState.value = {
+    ...uiState.value,
+    orgCollapsed: { ...uiState.value.orgCollapsed, [org]: collapsed },
+  };
+  void invoke('set_org_section_collapsed', { org, collapsed });
 }
 
 const actionNeedsNote = computed(
@@ -651,6 +779,15 @@ const fetchedLabel = computed(() => {
 });
 
 const graphqlBudgetLabel = computed(() => {
+  const budgets = snapshot.value?.graphqlBudgets;
+  if (budgets && budgets.length > 0) {
+    return budgets
+      .map(
+        (b) =>
+          `${b.credentialKey}: ${b.pollCost} pts/poll · ${b.remaining.toLocaleString()} left`,
+      )
+      .join(' · ');
+  }
   const cost = snapshot.value?.graphqlPollCost;
   const remaining = snapshot.value?.graphqlRemaining;
   if (cost == null && remaining == null) {
@@ -699,12 +836,13 @@ async function onResume(): Promise<void> {
   await reload();
 }
 
-async function saveToken(): Promise<void> {
+async function saveToken(org: string): Promise<void> {
   tokenMessage.value = '';
   try {
-    await invoke('store_github_token', { token: tokenInput.value });
-    tokenInput.value = '';
-    tokenMessage.value = 'Token saved to Keychain.';
+    const token = tokenInputs.value[org] ?? '';
+    await invoke('store_github_token', { org, token });
+    tokenInputs.value = { ...tokenInputs.value, [org]: '' };
+    tokenMessage.value = `Token saved for ${org}.`;
     await invoke('refresh_now');
     await reload();
   } catch (e) {
@@ -712,10 +850,10 @@ async function saveToken(): Promise<void> {
   }
 }
 
-async function clearToken(): Promise<void> {
-  await invoke('clear_github_token');
-  tokenInput.value = '';
-  tokenMessage.value = 'Token removed.';
+async function clearToken(org: string): Promise<void> {
+  await invoke('clear_github_token', { org });
+  tokenInputs.value = { ...tokenInputs.value, [org]: '' };
+  tokenMessage.value = `Token removed for ${org}.`;
   await reload();
 }
 </script>

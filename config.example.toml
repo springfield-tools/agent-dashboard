@@ -33,7 +33,22 @@ needs_testing = "needs-testing"
 needs_input = "needs-input"
 ready_to_merge = "ready-to-merge"
 
+# Each org can set credential = "keychain" (per-org Keychain PAT) or "gh" (CLI).
+# When omitted, uses [github].credential.
+
 [[orgs]]
 name = "springfield-ham-radio"
 include = []
 exclude = []
+
+[[orgs]]
+name = "springfield-tools"
+include = []
+exclude = []
+# credential = "keychain"
+
+[[orgs]]
+name = "springfield-usa"
+include = []
+exclude = []
+# credential = "gh"

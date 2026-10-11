@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
-use crate::config::AppConfig;
-use crate::keychain::{has_token, load_token, KeychainError};
+use crate::config::{AppConfig, OrgConfig};
+use crate::keychain::{has_token_for_org, load_token_for_org, KeychainError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GhTokenError {
@@ -32,6 +32,10 @@ pub fn uses_gh_credential(config: &AppConfig) -> bool {
     config.github.credential.trim().eq_ignore_ascii_case("gh")
 }
 
+pub fn org_uses_gh(org: &OrgConfig, config: &AppConfig) -> bool {
+    org.credential_mode(&config.github.credential) == "gh"
+}
+
 pub fn credential_source_label(config: &AppConfig) -> &'static str {
     if uses_gh_credential(config) {
         "gh"
@@ -40,11 +44,35 @@ pub fn credential_source_label(config: &AppConfig) -> &'static str {
     }
 }
 
+pub fn org_credential_source_label(org: &OrgConfig, config: &AppConfig) -> &'static str {
+    if org_uses_gh(org, config) {
+        "gh"
+    } else {
+        "keychain"
+    }
+}
+
 pub fn credential_is_ready(config: &AppConfig) -> bool {
-    if uses_gh_credential(config) {
+    config
+        .orgs
+        .iter()
+        .all(|org| org_credential_is_ready(org, config))
+}
+
+pub fn org_credential_is_ready(org: &OrgConfig, config: &AppConfig) -> bool {
+    if org_uses_gh(org, config) {
         resolve_gh_executable().is_some()
     } else {
-        has_token()
+        has_token_for_org(&org.name)
+    }
+}
+
+/// Budget bucket key shown in the footer (org name for keychain PATs, `gh` for CLI).
+pub fn graphql_budget_key(org: &OrgConfig, config: &AppConfig) -> String {
+    if org_uses_gh(org, config) {
+        "gh".to_string()
+    } else {
+        org.name.clone()
     }
 }
 
@@ -122,7 +150,20 @@ pub fn obtain_github_token(
     gh_cache: &Mutex<Option<String>>,
     invalidate_gh_cache: bool,
 ) -> Result<String, Option<String>> {
-    if uses_gh_credential(config) {
+    let org = config
+        .orgs
+        .first()
+        .ok_or(Some("No orgs configured.".to_string()))?;
+    obtain_github_token_for_org(config, org, gh_cache, invalidate_gh_cache)
+}
+
+pub fn obtain_github_token_for_org(
+    config: &AppConfig,
+    org: &OrgConfig,
+    gh_cache: &Mutex<Option<String>>,
+    invalidate_gh_cache: bool,
+) -> Result<String, Option<String>> {
+    if org_uses_gh(org, config) {
         if invalidate_gh_cache {
             clear_gh_session_cache(gh_cache);
         } else if let Ok(guard) = gh_cache.lock() {
@@ -141,11 +182,12 @@ pub fn obtain_github_token(
             Err(e) => Err(Some(e.banner_message())),
         }
     } else {
-        match load_token() {
+        match load_token_for_org(&org.name) {
             Ok(Some(token)) => Ok(token),
-            Ok(None) => Err(Some(
-                "Add a GitHub token in Settings (credential = \"keychain\").".to_string(),
-            )),
+            Ok(None) => Err(Some(format!(
+                "Add a GitHub token for org \"{}\" in Settings (credential = \"keychain\").",
+                org.name
+            ))),
             Err(KeychainError::Message(msg)) => Err(Some(msg)),
         }
     }
@@ -165,6 +207,20 @@ mod tests {
         assert!(uses_gh_credential(&config));
         config.github.credential = "GH".to_string();
         assert!(uses_gh_credential(&config));
+    }
+
+    #[test]
+    fn org_credential_override() {
+        let mut config = AppConfig::default();
+        config.github.credential = "keychain".to_string();
+        let org = OrgConfig {
+            name: "springfield-tools".to_string(),
+            credential: Some("gh".to_string()),
+            include: vec![],
+            exclude: vec![],
+        };
+        assert!(org_uses_gh(&org, &config));
+        assert_eq!(graphql_budget_key(&org, &config), "gh");
     }
 
     #[test]
@@ -222,8 +278,9 @@ mod tests {
         let mut config = AppConfig::default();
         config.github.credential = "gh".to_string();
         let cache = Mutex::new(Some("cached".to_string()));
+        let org = config.orgs[0].clone();
 
-        let token = obtain_github_token(&config, &cache, false).expect("ok");
+        let token = obtain_github_token_for_org(&config, &org, &cache, false).expect("ok");
         assert_eq!(token, "cached");
     }
 

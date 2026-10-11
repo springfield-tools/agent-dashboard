@@ -114,10 +114,23 @@ impl Default for LabelsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrgConfig {
     pub name: String,
+    /// Overrides `[github].credential` for this org (`keychain` or `gh`).
+    #[serde(default)]
+    pub credential: Option<String>,
     #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]
     pub exclude: Vec<String>,
+}
+
+impl OrgConfig {
+    pub fn credential_mode(&self, default: &str) -> String {
+        self.credential
+            .as_deref()
+            .unwrap_or(default)
+            .trim()
+            .to_ascii_lowercase()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,11 +214,26 @@ fn default_ci_staleness() -> u64 {
 }
 
 fn default_orgs() -> Vec<OrgConfig> {
-    vec![OrgConfig {
-        name: "springfield-ham-radio".to_string(),
-        include: vec![],
-        exclude: vec![],
-    }]
+    vec![
+        OrgConfig {
+            name: "springfield-ham-radio".to_string(),
+            credential: None,
+            include: vec![],
+            exclude: vec![],
+        },
+        OrgConfig {
+            name: "springfield-tools".to_string(),
+            credential: None,
+            include: vec![],
+            exclude: vec![],
+        },
+        OrgConfig {
+            name: "springfield-usa".to_string(),
+            credential: None,
+            include: vec![],
+            exclude: vec![],
+        },
+    ]
 }
 
 impl Default for AppConfig {
@@ -381,6 +409,7 @@ mod tests {
     fn app_config_default_poll_interval() {
         assert_eq!(AppConfig::default().poll_interval_seconds, 60);
         assert_eq!(AppConfig::default().ci_max_staleness_seconds, 60);
+        assert_eq!(AppConfig::default().orgs.len(), 3);
     }
 
     #[test]

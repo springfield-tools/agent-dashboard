@@ -281,6 +281,7 @@ mod tests {
     fn include_exclude_filters() {
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            credential: None,
             include: vec!["ham-radio-ui".to_string()],
             exclude: vec![],
         };
@@ -315,6 +316,7 @@ mod tests {
         let server = MockServer::start();
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            credential: None,
             include: vec!["ham-radio-ui".to_string()],
             exclude: vec![],
         };
@@ -354,6 +356,7 @@ mod tests {
         let server = MockServer::start();
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            credential: None,
             include: vec!["ham-radio-ui".to_string()],
             exclude: vec![],
         };

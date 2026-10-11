@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::config::{AppConfig, BotFilterMode, LabelsConfig};
@@ -56,10 +58,16 @@ pub struct FixtureFile {
     pub items: Vec<RawItem>,
 }
 
+fn default_chip_variant() -> String {
+    "neutral".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RowChip {
     pub label: String,
+    #[serde(default = "default_chip_variant")]
+    pub variant: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +99,26 @@ pub struct DashboardGroup {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct DashboardOrgSection {
+    pub org: String,
+    /// Tray-style counts for this org: input · testing · failing · merge.
+    pub tray_title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auth_banner: Option<String>,
+    pub groups: Vec<DashboardGroup>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GraphqlBudgetLine {
+    /// Org name for a Keychain PAT bucket, or `gh` for the CLI session.
+    pub credential_key: String,
+    pub poll_cost: i32,
+    pub remaining: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BotFooter {
     pub mode: String,
     pub green: u32,
@@ -108,6 +136,8 @@ pub struct DashboardSnapshot {
     pub fetched_at: String,
     pub stale: bool,
     pub groups: Vec<DashboardGroup>,
+    #[serde(default)]
+    pub org_sections: Vec<DashboardOrgSection>,
     pub bots: Option<BotFooter>,
     pub tray_title: String,
     pub tray_tooltip: String,
@@ -116,6 +146,8 @@ pub struct DashboardSnapshot {
     pub graphql_poll_cost: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub graphql_remaining: Option<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub graphql_budgets: Vec<GraphqlBudgetLine>,
 }
 
 fn group_title(id: &str) -> &'static str {
@@ -182,6 +214,20 @@ fn status_label_names(labels: &LabelsConfig) -> [&str; 4] {
     ]
 }
 
+fn chip_variant_for_status_label(name: &str, labels: &LabelsConfig) -> &'static str {
+    if name == labels.needs_input {
+        "needs-input"
+    } else if name == labels.needs_testing {
+        "needs-testing"
+    } else if name == labels.ready_to_merge {
+        "ready-to-merge"
+    } else if name == labels.agent_working {
+        "agent-working"
+    } else {
+        "neutral"
+    }
+}
+
 pub fn row_chips(item: &RawItem, group_id: &str, labels: &LabelsConfig) -> Vec<RowChip> {
     let mut chips = Vec::new();
     let status = status_label_names(labels);
@@ -190,18 +236,38 @@ pub fn row_chips(item: &RawItem, group_id: &str, labels: &LabelsConfig) -> Vec<R
         if has_label(&item.labels, name) && !group_matches_label(group_id, name, labels) {
             chips.push(RowChip {
                 label: name.to_string(),
+                variant: chip_variant_for_status_label(name, labels).to_string(),
             });
         }
     }
 
     if let Some(ci) = &item.ci {
-        if group_id != "ci-failing" {
+        if group_id == "ci-failing" {
+            let names = &ci.failed_checks;
+            const MAX: usize = 3;
+            for (i, check) in names.iter().enumerate() {
+                if i >= MAX {
+                    let more = names.len() - MAX;
+                    chips.push(RowChip {
+                        label: format!("and {more} more"),
+                        variant: "ci-failing".to_string(),
+                    });
+                    break;
+                }
+                chips.push(RowChip {
+                    label: check.clone(),
+                    variant: "ci-failing".to_string(),
+                });
+            }
+        } else {
             match ci.state.as_deref() {
                 Some("PENDING") => chips.push(RowChip {
                     label: "CI running".to_string(),
+                    variant: "ci-running".to_string(),
                 }),
                 Some("FAILURE") | Some("ERROR") => chips.push(RowChip {
                     label: "CI failing".to_string(),
+                    variant: "ci-failing".to_string(),
                 }),
                 _ => {}
             }
@@ -277,23 +343,34 @@ pub fn snapshot_is_stale(fetched_at: &str, interval_secs: u64) -> bool {
     }
 }
 
-pub fn build_dashboard(
+fn groups_from_buckets(buckets: &[Vec<DashboardRow>]) -> Vec<DashboardGroup> {
+    let mut groups = Vec::new();
+    for (idx, id) in GROUP_IDS.iter().enumerate() {
+        let rows = &buckets[idx];
+        if rows.is_empty() {
+            continue;
+        }
+        let mut sorted = rows.clone();
+        sorted.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        groups.push(DashboardGroup {
+            id: id.to_string(),
+            title: group_title(id).to_string(),
+            items: sorted,
+        });
+    }
+    groups
+}
+
+fn build_buckets_for_items(
     items: Vec<RawItem>,
     config: &AppConfig,
-    fetched_at: &str,
-    graphql_poll_cost: Option<i32>,
-    graphql_remaining: Option<i32>,
-) -> DashboardSnapshot {
-    let labels = &config.labels;
-    let bot_mode = config.filters.bots;
-    let surface_failing = config.filters.surface_failing_bots;
-
-    let mut bot_green = 0u32;
-    let mut bot_no_ci = 0u32;
-    let mut bot_failing = 0u32;
-    let mut bot_pending = 0u32;
-
+    labels: &LabelsConfig,
+    bot_mode: BotFilterMode,
+    surface_failing: bool,
+    bot_counters: &mut (u32, u32, u32, u32),
+) -> Vec<Vec<DashboardRow>> {
     let mut buckets: Vec<Vec<DashboardRow>> = vec![vec![]; GROUP_IDS.len()];
+    let (bot_green, bot_no_ci, bot_failing, bot_pending) = bot_counters;
 
     for item in items {
         let is_bot = is_bot_author(&item.author, &config.filters.bot_logins);
@@ -310,14 +387,14 @@ pub fn build_dashboard(
                 }
                 BotFilterMode::Collapse => {
                     if surface_failing && failing {
-                        bot_failing += 1;
+                        *bot_failing += 1;
                         push_row(&mut buckets, "ci-failing", item, labels);
                     } else {
                         match item.ci.as_ref().and_then(|c| c.state.as_deref()) {
-                            Some("SUCCESS") => bot_green += 1,
-                            None => bot_no_ci += 1,
-                            Some("FAILURE") | Some("ERROR") => bot_failing += 1,
-                            Some("PENDING") | Some("EXPECTED") => bot_pending += 1,
+                            Some("SUCCESS") => *bot_green += 1,
+                            None => *bot_no_ci += 1,
+                            Some("FAILURE") | Some("ERROR") => *bot_failing += 1,
+                            Some("PENDING") | Some("EXPECTED") => *bot_pending += 1,
                             _ => {}
                         }
                     }
@@ -330,19 +407,76 @@ pub fn build_dashboard(
         push_row(&mut buckets, group_id, item, labels);
     }
 
-    let mut groups = Vec::new();
+    buckets
+}
 
-    for (idx, id) in GROUP_IDS.iter().enumerate() {
-        let rows = &mut buckets[idx];
-        rows.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+pub fn build_dashboard_simple(
+    items: Vec<RawItem>,
+    config: &AppConfig,
+    fetched_at: &str,
+    graphql_poll_cost: Option<i32>,
+    graphql_remaining: Option<i32>,
+) -> DashboardSnapshot {
+    build_dashboard(
+        items,
+        config,
+        fetched_at,
+        graphql_poll_cost,
+        graphql_remaining,
+        vec![],
+        HashMap::new(),
+    )
+}
 
-        if !rows.is_empty() {
-            groups.push(DashboardGroup {
-                id: id.to_string(),
-                title: group_title(id).to_string(),
-                items: rows.clone(),
-            });
-        }
+pub fn build_dashboard(
+    items: Vec<RawItem>,
+    config: &AppConfig,
+    fetched_at: &str,
+    graphql_poll_cost: Option<i32>,
+    graphql_remaining: Option<i32>,
+    graphql_budgets: Vec<GraphqlBudgetLine>,
+    org_auth_banners: HashMap<String, String>,
+) -> DashboardSnapshot {
+    let labels = &config.labels;
+    let bot_mode = config.filters.bots;
+    let surface_failing = config.filters.surface_failing_bots;
+
+    let mut bot_counters = (0u32, 0u32, 0u32, 0u32);
+    let buckets = build_buckets_for_items(
+        items.clone(),
+        config,
+        labels,
+        bot_mode,
+        surface_failing,
+        &mut bot_counters,
+    );
+    let (bot_green, bot_no_ci, bot_failing, bot_pending) = bot_counters;
+
+    let groups = groups_from_buckets(&buckets);
+
+    let mut org_sections = Vec::new();
+    for org_cfg in &config.orgs {
+        let org_items: Vec<RawItem> = items
+            .iter()
+            .filter(|i| i.org == org_cfg.name)
+            .cloned()
+            .collect();
+        let mut local_bot = (0u32, 0u32, 0u32, 0u32);
+        let org_buckets = build_buckets_for_items(
+            org_items.clone(),
+            config,
+            labels,
+            bot_mode,
+            surface_failing,
+            &mut local_bot,
+        );
+        let org_tray = format_tray_title(&tray_counts_in_adr_order(&org_buckets));
+        org_sections.push(DashboardOrgSection {
+            org: org_cfg.name.clone(),
+            tray_title: org_tray,
+            auth_banner: org_auth_banners.get(&org_cfg.name).cloned(),
+            groups: groups_from_buckets(&org_buckets),
+        });
     }
 
     let tray_counts = tray_counts_in_adr_order(&buckets);
@@ -374,15 +508,17 @@ pub fn build_dashboard(
     };
 
     DashboardSnapshot {
-        schema_version: 1,
+        schema_version: 2,
         fetched_at: fetched_at.to_string(),
         stale: false,
         groups,
+        org_sections,
         bots,
         tray_title,
         tray_tooltip,
         graphql_poll_cost,
         graphql_remaining,
+        graphql_budgets,
     }
 }
 
@@ -442,7 +578,7 @@ mod tests {
         let labels = LabelsConfig::default();
         let item = sample_item(vec!["needs-input", "agent-working"], Some("SUCCESS"));
         assert_eq!(assign_group(&item, &labels), "needs-input");
-        let snapshot = build_dashboard(vec![item], &AppConfig::default(), "now", None, None);
+        let snapshot = build_dashboard_simple(vec![item], &AppConfig::default(), "now", None, None);
         assert_eq!(snapshot.groups[0].id, "needs-input");
         assert!(snapshot.groups[0].items[0].chips.iter().any(|c| c.label == "agent-working"));
     }
@@ -452,7 +588,7 @@ mod tests {
         let labels = LabelsConfig::default();
         let item = sample_item(vec!["needs-testing"], Some("FAILURE"));
         assert_eq!(assign_group(&item, &labels), "ci-failing");
-        let snapshot = build_dashboard(vec![item], &AppConfig::default(), "now", None, None);
+        let snapshot = build_dashboard_simple(vec![item], &AppConfig::default(), "now", None, None);
         assert_eq!(snapshot.groups[0].id, "ci-failing");
         assert!(snapshot
             .groups[0]
@@ -526,7 +662,7 @@ mod tests {
             ci: None,
         });
 
-        let snapshot = build_dashboard(items, &config, "now", None, None);
+        let snapshot = build_dashboard_simple(items, &config, "now", None, None);
         assert!(snapshot.bots.is_some());
         let bots = snapshot.bots.unwrap();
         assert_eq!(bots.green, 29);
@@ -542,7 +678,7 @@ mod tests {
 
     #[test]
     fn tray_title_empty_when_all_quiet() {
-        let snapshot = build_dashboard(vec![], &AppConfig::default(), "now", None, None);
+        let snapshot = build_dashboard_simple(vec![], &AppConfig::default(), "now", None, None);
         assert!(snapshot.tray_title.is_empty());
         assert_eq!(snapshot.tray_tooltip, empty_tray_tooltip());
     }
@@ -585,7 +721,7 @@ mod tests {
             sample_item(vec!["ready-to-merge"], Some("SUCCESS")),
         ];
 
-        let snapshot = build_dashboard(items, &config, "now", None, None);
+        let snapshot = build_dashboard_simple(items, &config, "now", None, None);
         assert_eq!(snapshot.tray_title, "1·1·1·1");
     }
 
@@ -609,7 +745,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
+        let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         assert!(snapshot.bots.is_none());
         assert!(snapshot.groups.is_empty());
     }
@@ -635,7 +771,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
+        let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         assert!(snapshot.groups.is_empty());
         let bots = snapshot.bots.expect("footer");
         assert_eq!(bots.failing, 1);
@@ -662,10 +798,34 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
+        let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         let bots = snapshot.bots.expect("footer");
         assert_eq!(bots.pending, 1);
         assert_eq!(bots.green, 0);
+    }
+
+    #[test]
+    fn ci_failing_chip_includes_failed_check_names() {
+        let config = AppConfig::default();
+        let item = RawItem {
+            kind: ItemKind::Pr,
+            org: "springfield-ham-radio".to_string(),
+            repo: "ham-radio-ui".to_string(),
+            number: 1,
+            title: "red".to_string(),
+            url: "https://example.com".to_string(),
+            author: "human".to_string(),
+            updated_at: "2026-10-10T12:00:00Z".to_string(),
+            is_draft: false,
+            labels: vec![],
+            ci: Some(CiSnapshot {
+                state: Some("FAILURE".to_string()),
+                failed_checks: vec!["build".to_string(), "lint".to_string()],
+            }),
+        };
+        let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
+        let row = &snapshot.groups[0].items[0];
+        assert!(row.chips.iter().any(|c| c.label == "build" && c.variant == "ci-failing"));
     }
 
     #[test]
@@ -687,7 +847,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
+        let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         assert_eq!(snapshot.groups[0].id, "ci-failing");
     }
 
@@ -720,7 +880,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
+        let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         let bots = snapshot.bots.expect("footer");
         assert_eq!(bots.pending, 1);
     }
@@ -745,7 +905,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
+        let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         assert!(snapshot.bots.is_none());
         assert_eq!(snapshot.groups[0].id, "not-started");
         assert_eq!(snapshot.groups[0].items.len(), 1);

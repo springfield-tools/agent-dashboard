@@ -2,6 +2,7 @@ export type ItemKind = 'issue' | 'pr';
 
 export type RowChip = {
   label: string;
+  variant?: string;
 };
 
 export type CiSnapshot = {
@@ -30,6 +31,19 @@ export type DashboardGroup = {
   items: DashboardRow[];
 };
 
+export type DashboardOrgSection = {
+  org: string;
+  trayTitle: string;
+  authBanner?: string | null;
+  groups: DashboardGroup[];
+};
+
+export type GraphqlBudgetLine = {
+  credentialKey: string;
+  pollCost: number;
+  remaining: number;
+};
+
 export type BotFooter = {
   mode: string;
   green: number;
@@ -44,11 +58,30 @@ export type DashboardSnapshot = {
   fetchedAt: string;
   stale: boolean;
   groups: DashboardGroup[];
+  orgSections?: DashboardOrgSection[];
   bots: BotFooter | null;
   trayTitle: string;
   trayTooltip: string;
   graphqlPollCost?: number | null;
   graphqlRemaining?: number | null;
+  graphqlBudgets?: GraphqlBudgetLine[];
+};
+
+export type OrgConfigEntry = {
+  name: string;
+  credential?: string | null;
+  include: string[];
+  exclude: string[];
+};
+
+export type OrgAuthStatus = {
+  name: string;
+  credentialSource: string;
+  ready: boolean;
+};
+
+export type UiState = {
+  orgCollapsed: Record<string, boolean>;
 };
 
 export type ConfigStatus = {
@@ -61,6 +94,8 @@ export type ConfigStatus = {
   pauseTooltip: string;
   hasGithubToken: boolean;
   credentialSource: string;
+  orgs: OrgConfigEntry[];
+  orgAuth: OrgAuthStatus[];
   authError: string | null;
   offline: boolean;
   banner: string | null;

@@ -9,11 +9,12 @@ use tokio::sync::Notify;
 use crate::backoff::{wait_seconds_for_failure, FailureKind};
 use crate::brakes::{apply_brakes, brake_slow_interval_for_cost, LOW_REMAINING_STOP};
 use crate::config::{save_config, AppConfig, DEFAULT_POLL_INTERVAL};
-use crate::credential::{clear_gh_session_cache, obtain_github_token, uses_gh_credential};
+use crate::credential::obtain_github_token_for_org;
 use crate::etag_probe::{evaluate_probe, should_skip_graphql_after_org_probes};
-use crate::github::{fetch_all_orgs, GraphqlError};
+use crate::github::fetch_all_orgs_multi;
 use crate::idle;
 use crate::model::build_dashboard;
+use crate::config::OrgConfig;
 use crate::pause::{clear_expired_timed_pause, is_polling_paused, seconds_until_timed_resume};
 use crate::snapshot::write_snapshot_file;
 use crate::state::AppState;
@@ -374,19 +375,6 @@ pub async fn run_poll_cycle<R: Runtime>(
             .map(|c| c.clone())
             .map_err(|_| "config lock poisoned".to_string())?;
 
-        let token = match obtain_github_token(
-            &config,
-            &state.poll_runtime.gh_token_cache,
-            false,
-        ) {
-            Ok(token) => token,
-            Err(Some(message)) => {
-                state.set_auth_error(Some(message));
-                return Ok(());
-            }
-            Err(None) => return Ok(()),
-        };
-
         let last_fetched = state
             .dashboard
             .lock()
@@ -398,6 +386,15 @@ pub async fn run_poll_cycle<R: Runtime>(
                 Vec::new();
             let mut combined_banner = None;
             for org in &config.orgs {
+                let token = match obtain_github_token_for_org(
+                    &config,
+                    org,
+                    &state.poll_runtime.gh_token_cache,
+                    false,
+                ) {
+                    Ok(token) => token,
+                    Err(_) => continue,
+                };
                 let probe = match evaluate_probe(
                     client,
                     &token,
@@ -438,80 +435,25 @@ pub async fn run_poll_cycle<R: Runtime>(
             }
         }
 
-        let fetch = fetch_all_orgs(client, &token, &config)
-            .await
-            .map_err(|e| match e {
-                GraphqlError::Unauthorized => {
-                    if uses_gh_credential(&config) {
-                        clear_gh_session_cache(&state.poll_runtime.gh_token_cache);
-                        state.set_auth_error(Some(
-                            "GitHub rejected the gh token (401). Run `gh auth login` or refresh scopes; the next poll will call `gh auth token` again."
-                                .to_string(),
-                        ));
-                    } else {
-                        state.set_auth_error(Some(
-                            "GitHub rejected the token (401). Paste a new fine-grained PAT in Settings."
-                                .to_string(),
-                        ));
-                    }
-                    "unauthorized".to_string()
-                }
-                GraphqlError::Network(msg) => {
-                    state.set_offline(true);
-                    msg
-                }
-                GraphqlError::RateLimited {
-                    retry_after_secs,
-                    reset_at,
-                    primary_exhausted,
-                    message,
-                } => {
-                    let nanos = Utc::now().timestamp_subsec_nanos();
-                    if primary_exhausted {
-                        if let Some(ref reset) = reset_at {
-                            set_primary_rate_limit_until(
-                                &state.poll_runtime,
-                                reset,
-                                nanos,
-                            );
-                        } else {
-                            set_secondary_rate_limit_until(
-                                &state.poll_runtime,
-                                300,
-                                nanos,
-                            );
-                        }
-                    } else if let Some(retry) = retry_after_secs {
-                        set_secondary_rate_limit_until(
-                            &state.poll_runtime,
-                            retry,
-                            nanos,
-                        );
-                    } else if let Some(ref reset) = reset_at {
-                        set_primary_rate_limit_until(&state.poll_runtime, reset, nanos);
-                    } else {
-                        set_secondary_rate_limit_until(&state.poll_runtime, 60, nanos);
-                    }
-                    state.set_banner(Some(
-                        "GitHub rate limit. Will retry after the reset window.".to_string(),
-                    ));
-                    log::warn!("rate limited: {message}");
-                    "rate_limited".to_string()
-                }
-                GraphqlError::Forbidden { status, message } => {
-                    let hint = if uses_gh_credential(&config) {
-                        "Check `gh auth status`, org access, and repository scopes."
-                    } else {
-                        "Check fine-grained PAT permissions, org approval, and repository access."
-                    };
-                    state.set_auth_error(Some(format!(
-                        "GitHub denied access ({status}). {hint}"
-                    )));
-                    log::warn!("forbidden: {message}");
-                    "forbidden".to_string()
-                }
-                GraphqlError::GraphQl(msg) => msg,
-            })?;
+        let config_for_fetch = config.clone();
+        let gh_cache = &state.poll_runtime.gh_token_cache;
+        let fetch = fetch_all_orgs_multi(client, &config, |org: &OrgConfig| {
+            obtain_github_token_for_org(&config_for_fetch, org, gh_cache, false).map_err(|opt| {
+                opt.unwrap_or_else(|| format!("GitHub token unavailable for \"{}\".", org.name))
+            })
+        })
+        .await;
+
+        if fetch.items.is_empty() && fetch.org_errors.len() == config.orgs.len() && !config.orgs.is_empty() {
+            let message = fetch
+                .org_errors
+                .values()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "No org credentials available.".to_string());
+            state.set_auth_error(Some(message));
+            return Ok(());
+        }
 
         state.set_auth_error(None);
         state.set_offline(false);
@@ -523,7 +465,7 @@ pub async fn run_poll_cycle<R: Runtime>(
                 state.set_banner(Some(hint));
             } else if let Some(w) = fetch.warning {
                 state.set_banner(Some(w));
-            } else {
+            } else if fetch.org_errors.is_empty() {
                 state.set_banner(Some(
                     "GitHub returned no open items. Check token permissions and org config."
                         .to_string(),
@@ -547,6 +489,8 @@ pub async fn run_poll_cycle<R: Runtime>(
             &fetched_at,
             poll_cost,
             poll_remaining,
+            fetch.budgets,
+            fetch.org_errors,
         );
         state.set_dashboard(snapshot.clone());
         if let Ok(mut write) = state.write_state.lock() {
@@ -562,7 +506,7 @@ pub async fn run_poll_cycle<R: Runtime>(
             }
         }
 
-        if let Some(rl) = fetch.rate_limit {
+        if let Some(rl) = fetch.rate_limit.clone() {
             if let Ok(mut guard) = state.poll_runtime.last_poll_cost.lock() {
                 *guard = rl.cost;
             }
