@@ -434,38 +434,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_label_diff_at_remove_then_add() {
-        let server = MockServer::start();
-        let base = server.base_url();
-        let remove_mock = server.mock(|when, then| {
-            when.method(DELETE)
-                .path("/repos/o/r/issues/5/labels/needs-testing");
-            then.status(200);
-        });
-        let add_mock = server.mock(|when, then| {
-            when.method(POST).path("/repos/o/r/issues/5/labels");
-            then.status(200);
-        });
-        let client = Client::builder().build().unwrap();
-        let to_add = vec!["ready-to-merge".to_string()];
-        let to_remove = vec!["needs-testing".to_string()];
-        apply_label_diff_at(
-            &client,
-            &base,
-            "tok",
-            "o",
-            "r",
-            5,
-            &to_add,
-            &to_remove,
-        )
-        .await
-        .expect("label diff");
-        remove_mock.assert();
-        add_mock.assert();
-    }
-
-    #[tokio::test]
     async fn testing_passed_write_then_undo_restores_labels_and_deletes_comment() {
         use crate::model::{CiSnapshot, DashboardRow, ItemKind};
         use crate::row_actions::{label_diff_for_action, RowActionKind};
@@ -473,12 +441,12 @@ mod tests {
 
         let server = MockServer::start();
         let base = server.base_url();
+        let client = Client::builder().build().unwrap();
+        let token = "tok";
         let owner = "o";
         let repo = "r";
         let number = 5u32;
 
-        let client = Client::builder().build().unwrap();
-        let token = "tok";
         let labels = crate::config::LabelsConfig::default();
         let row = DashboardRow {
             kind: ItemKind::Pr,
@@ -510,6 +478,7 @@ mod tests {
 
         let body = "Testing passed. Ready to merge.\n\n— Agent Dashboard";
 
+        // Write: remove needs-testing, add ready-to-merge (Testing passed).
         let write_remove_needs_testing = server.mock(|when, then| {
             when.method(DELETE)
                 .path("/repos/o/r/issues/5/labels/needs-testing");
@@ -521,8 +490,6 @@ mod tests {
         });
         let write_labels_to_add = vec!["ready-to-merge".to_string()];
         let write_labels_to_remove = vec!["needs-testing".to_string()];
-        assert_eq!(write_labels_to_add, write_add);
-        assert_eq!(write_labels_to_remove, write_remove);
         apply_label_diff_at(
             &client,
             &base,
@@ -554,6 +521,7 @@ mod tests {
         assert_eq!(undo.undo_labels_remove, vec!["ready-to-merge".to_string()]);
         assert_eq!(undo.undo_labels_add, vec!["needs-testing".to_string()]);
 
+        // Undo: remove ready-to-merge, re-add needs-testing, then delete audit comment.
         let undo_remove_ready = server.mock(|when, then| {
             when.method(DELETE)
                 .path("/repos/o/r/issues/5/labels/ready-to-merge");
@@ -565,12 +533,13 @@ mod tests {
         });
         let undo_delete_comment = server.mock(|when, then| {
             when.method(DELETE)
-                .path(format!("/repos/{owner}/{repo}/issues/comments/42"));
+                .path("/repos/o/r/issues/comments/42");
             then.status(204);
         });
-
-        let undo_add = undo.undo_labels_add.clone();
-        let undo_remove = undo.undo_labels_remove.clone();
+        let undo_labels_to_add = vec!["needs-testing".to_string()];
+        let undo_labels_to_remove = vec!["ready-to-merge".to_string()];
+        assert_eq!(undo_labels_to_add, undo.undo_labels_add);
+        assert_eq!(undo_labels_to_remove, undo.undo_labels_remove);
         apply_undo_label_diff_at(
             &client,
             &base,
@@ -578,8 +547,8 @@ mod tests {
             owner,
             repo,
             number,
-            &undo_add,
-            &undo_remove,
+            &undo_labels_to_add,
+            &undo_labels_to_remove,
         )
         .await
         .expect("undo label diff");
@@ -589,7 +558,6 @@ mod tests {
         delete_issue_comment_at(&client, &base, token, owner, repo, comment_id)
             .await
             .expect("undo delete comment");
-
         undo_delete_comment.assert();
     }
 
