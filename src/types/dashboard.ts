@@ -91,7 +91,7 @@ export type WriteUiState = {
   undoAvailable: boolean;
   undoMessage: string | null;
   partialFailure: {
-    kind: 'retryComment' | 'retryLabels';
+    kind: 'retryLabels';
     message: string;
   } | null;
   toast: string | null;

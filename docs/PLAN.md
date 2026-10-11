@@ -520,6 +520,7 @@ Out of scope for v1. Do not build these in the phases below.
 - **CLI dump** of `snapshot.json` for the morning summary, for hosts where the tray app is not running.
 - **Device-flow OAuth** and **Apple notarization**, when someone besides Bryan installs the app.
 - **Snooze, author filter, keyboard shortcut, menu-bar color dots.** Product polish after the live poll is trustworthy.
+- **Multiple Keychain PATs per org.** A fine-grained PAT has one resource owner. A later version could map each `[[orgs]]` entry to its own Keychain item, or Bryan switches to `credential = "gh"` when polling several owners. Phase 5 uses one token for all configured orgs.
 
 ## 7. Phased build
 
@@ -683,7 +684,7 @@ There is no documented `@cursor stop`. Undo does not send `autofix off`.
 - A label such as `dependencies` is still present after every action.
 - The poller is unchanged: it never comments or relabels on its own.
 
-**Bryan tests.** From `~/Development/springfield-tools/agent-dashboard`, run `yarn tauri:dev`. In a scratch issue under `~/Development/springfield-ham-radio/<repo>` (create one; leave `ham-radio-ui` #84 alone), add `needs-testing`, run Testing passed → Ready to merge, and confirm the labels and the footer on GitHub. Undo from the popover and confirm the label and the comment are gone. Then Send back with a short note and confirm a cloud agent starts on that issue. Remove the scratch issue's labels when finished. Paste a write-capable token when the app reports a 403.
+**Bryan tests.** From `~/Development/springfield-tools/agent-dashboard`, run `yarn tauri:dev`. Use a **scratch issue in a `springfield-ham-radio` repo** (not `springfield-tools/agent-dashboard` unless you add that org and use `credential = "gh"`). A Keychain fine-grained PAT is tied to one resource owner (default config: `springfield-ham-radio` only). Upgrade the PAT to Issues and Pull requests **Read and write**, re-save in Settings. Add `needs-testing` on the scratch issue (leave `ham-radio-ui` #84 alone), run Testing passed → Ready to merge, and confirm labels and the audit comment on GitHub. Undo within ~60s and confirm labels and comment are gone. Send back with a short note — **`@cursor` starts a real cloud agent** on your Cursor account. Remove scratch labels when finished.
 
 ### Phase 6 — Release
 

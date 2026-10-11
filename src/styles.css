@@ -159,6 +159,14 @@ body {
   resize: vertical;
 }
 
+.testing-passed-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
 .row-top {
   display: flex;
   flex-wrap: wrap;

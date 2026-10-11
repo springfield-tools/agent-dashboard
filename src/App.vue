@@ -103,7 +103,7 @@
     </div>
     <div v-if="writeUi?.partialFailure" class="undo-bar">
       <button type="button" class="btn-text" @click="onRetryPartial">
-        Retry {{ writeUi.partialFailure.kind === 'retryLabels' ? 'labels' : 'comment' }}
+        Retry labels
       </button>
       <span class="undo-hint">{{ writeUi.partialFailure.message }}</span>
     </div>
@@ -143,13 +143,43 @@
           </span>
         </p>
         <pre v-if="actionPreview" class="action-comment">{{ actionPreview.commentBody }}</pre>
+        <div v-if="actionSheetMode === 'testingPassed'" class="testing-passed-choice">
+          <label class="control-label">
+            <input
+              v-model="testingPassedChoice"
+              type="radio"
+              value="testingPassedReady"
+              @change="onTestingPassedChoiceChange"
+            />
+            Ready to merge
+          </label>
+          <label class="control-label">
+            <input
+              v-model="testingPassedChoice"
+              type="radio"
+              value="testingPassedHandBack"
+              @change="onTestingPassedChoiceChange"
+            />
+            Hand back to agent
+          </label>
+        </div>
         <label v-if="actionNeedsNote" class="settings-label">
-          Note
-          <textarea v-model="actionNote" class="settings-input action-note" rows="3" />
+          Answer
+          <textarea
+            v-model="actionNote"
+            class="settings-input action-note"
+            rows="3"
+            @input="onActionNoteInput"
+          />
         </label>
         <label v-else-if="showOptionalNote" class="settings-label">
           Optional note
-          <textarea v-model="actionNote" class="settings-input action-note" rows="2" />
+          <textarea
+            v-model="actionNote"
+            class="settings-input action-note"
+            rows="2"
+            @input="onActionNoteInput"
+          />
         </label>
         <p v-if="actionError" class="banner banner-error">{{ actionError }}</p>
         <div class="settings-actions action-buttons">
@@ -158,17 +188,9 @@
               type="button"
               class="btn-primary"
               :disabled="actionBusy"
-              @click="confirmAction('testingPassedReady')"
+              @click="confirmAction(testingPassedChoice)"
             >
-              Ready to merge
-            </button>
-            <button
-              type="button"
-              class="btn-text"
-              :disabled="actionBusy"
-              @click="confirmAction('testingPassedHandBack')"
-            >
-              Hand back to agent
+              Confirm
             </button>
           </template>
           <template v-else>
@@ -290,6 +312,8 @@ const actionNote = ref('');
 const actionError = ref('');
 const actionBusy = ref(false);
 const rowPicker = ref<{ groupId: string; row: DashboardRow } | null>(null);
+const testingPassedChoice = ref<RowActionKind>('testingPassedReady');
+let previewDebounce: ReturnType<typeof setTimeout> | undefined;
 let unlistenUpdated: (() => void) | undefined;
 let unlistenSettings: (() => void) | undefined;
 
@@ -343,14 +367,42 @@ async function refreshPreview(action: RowActionKind): Promise<void> {
     return;
   }
   const { groupId, row } = actionTarget.value;
-  actionPreview.value = await invoke<RowActionPreview>('preview_row_action_cmd', {
-    groupId,
-    org: row.org,
-    repo: row.repo,
-    number: row.number,
-    action,
-    note: actionNote.value,
-  });
+  try {
+    actionPreview.value = await invoke<RowActionPreview>('preview_row_action_cmd', {
+      groupId,
+      org: row.org,
+      repo: row.repo,
+      number: row.number,
+      action,
+      note: actionNote.value,
+    });
+    actionError.value = '';
+  } catch (e) {
+    actionError.value = String(e);
+  }
+}
+
+function onActionNoteInput(): void {
+  if (previewDebounce) {
+    clearTimeout(previewDebounce);
+  }
+  previewDebounce = setTimeout(() => {
+    void refreshPreviewForCurrentSheet();
+  }, 200);
+}
+
+async function refreshPreviewForCurrentSheet(): Promise<void> {
+  if (actionSheetMode.value === 'testingPassed') {
+    await refreshPreview(testingPassedChoice.value);
+    return;
+  }
+  if (actionSheetMode.value !== 'testingPassed') {
+    await refreshPreview(actionSheetMode.value as RowActionKind);
+  }
+}
+
+function onTestingPassedChoiceChange(): void {
+  void refreshPreview(testingPassedChoice.value);
 }
 
 function openRowPicker(groupId: string, row: DashboardRow): void {
@@ -370,14 +422,22 @@ async function startAction(
     actionSheetMode.value = 'testingPassed';
     actionSheetTitle.value = 'Testing passed';
     actionNote.value = '';
+    testingPassedChoice.value = 'testingPassedReady';
+    actionSheetOpen.value = true;
     await refreshPreview('testingPassedReady');
+  } else if (entry.mode === 'answer') {
+    actionSheetMode.value = entry.mode;
+    actionSheetTitle.value = entry.label;
+    actionNote.value = '';
+    actionSheetOpen.value = true;
+    await refreshPreview('answer');
   } else {
     actionSheetMode.value = entry.mode;
     actionSheetTitle.value = entry.label;
     actionNote.value = '';
+    actionSheetOpen.value = true;
     await refreshPreview(entry.mode);
   }
-  actionSheetOpen.value = true;
 }
 
 function closeActionSheet(): void {
@@ -396,7 +456,10 @@ async function confirmAction(action: RowActionKind): Promise<void> {
   actionBanner.value = null;
   const { groupId, row } = actionTarget.value;
   try {
-    await refreshPreview(action);
+    if (action === 'answer' && !actionNote.value.trim()) {
+      actionError.value = 'Answer text is required.';
+      return;
+    }
     await invoke('confirm_row_action', {
       groupId,
       org: row.org,

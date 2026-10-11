@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::config::LabelsConfig;
@@ -29,10 +30,15 @@ impl RowKey {
 #[derive(Debug, Clone)]
 pub struct UndoRecord {
     pub key: RowKey,
+    /// Full label list before the write (for optimistic UI).
     pub previous_labels: Vec<String>,
+    /// Inverse of the write label diff: remove what the write added, add what it removed.
+    pub undo_labels_remove: Vec<String>,
+    pub undo_labels_add: Vec<String>,
     pub comment_id: Option<u64>,
     pub wakes_agent: bool,
     pub expires_at: Instant,
+    pub write_finished_at: DateTime<Utc>,
     pub owner: String,
     pub repo: String,
     pub number: u32,
@@ -41,7 +47,6 @@ pub struct UndoRecord {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum PartialFailureKind {
-    RetryComment,
     RetryLabels,
 }
 
@@ -51,11 +56,12 @@ pub struct PartialFailure {
     pub kind: PartialFailureKind,
     pub message: String,
     pub key: RowKey,
-    pub action: RowActionKind,
-    pub comment_id: Option<u64>,
     pub labels_to_add: Vec<String>,
     pub labels_to_remove: Vec<String>,
+    pub previous_labels: Vec<String>,
+    pub comment_id: Option<u64>,
     pub comment_body: String,
+    pub wakes_agent: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,7 +83,6 @@ pub struct WriteState {
     pub undo: Option<UndoRecord>,
     pub partial: Option<PartialFailure>,
     pub toast: Option<String>,
-    /// Optimistic full label lists per row (overrides snapshot until poll reconciles).
     pub optimistic_labels: std::collections::HashMap<RowKey, Vec<String>>,
 }
 
@@ -92,9 +97,19 @@ impl WriteState {
         }
     }
 
-    pub fn clear_on_poll_success(&mut self) {
+    /// Successful poll: drop optimistic overlay; end undo if this fetch is newer than the write or 60s elapsed.
+    pub fn reconcile_poll(&mut self, poll_fetched_at: &str) {
         self.pending.clear();
         self.optimistic_labels.clear();
+        self.expire_undo_by_time();
+        if let Some(undo) = &self.undo {
+            if poll_postdates_write(poll_fetched_at, undo.write_finished_at) {
+                self.undo = None;
+            }
+        }
+    }
+
+    pub fn expire_undo_by_time(&mut self) {
         if let Some(undo) = &self.undo {
             if Instant::now() >= undo.expires_at {
                 self.undo = None;
@@ -102,16 +117,13 @@ impl WriteState {
         }
     }
 
-    pub fn expire_undo(&mut self) {
-        if let Some(undo) = &self.undo {
-            if Instant::now() >= undo.expires_at {
-                self.undo = None;
-            }
-        }
+    pub fn take_undo_if_valid(&mut self) -> Option<UndoRecord> {
+        self.expire_undo_by_time();
+        self.undo.take()
     }
 
     pub fn ui_state(&mut self) -> WriteUiState {
-        self.expire_undo();
+        self.expire_undo_by_time();
         let undo_available = self.undo.is_some();
         let undo_message = if undo_available {
             if self.undo.as_ref().map(|u| u.wakes_agent).unwrap_or(false) {
@@ -132,6 +144,13 @@ impl WriteState {
             partial_failure: self.partial.clone(),
             toast: self.toast.clone(),
         }
+    }
+}
+
+pub fn poll_postdates_write(poll_fetched_at: &str, write_finished_at: DateTime<Utc>) -> bool {
+    match DateTime::parse_from_rfc3339(poll_fetched_at) {
+        Ok(ts) => ts.with_timezone(&Utc) > write_finished_at,
+        Err(_) => true,
     }
 }
 
@@ -161,6 +180,11 @@ fn raw_from_row(row: &DashboardRow) -> RawItem {
     }
 }
 
+fn preserve_bots(mut built: DashboardSnapshot, from: &DashboardSnapshot) -> DashboardSnapshot {
+    built.bots = from.bots.clone();
+    built
+}
+
 pub fn apply_optimistic_labels(
     snapshot: &DashboardSnapshot,
     config: &crate::config::AppConfig,
@@ -174,13 +198,14 @@ pub fn apply_optimistic_labels(
             break;
         }
     }
-    build_dashboard(
+    let built = build_dashboard(
         items,
         config,
         &snapshot.fetched_at,
         snapshot.graphql_poll_cost,
         snapshot.graphql_remaining,
-    )
+    );
+    preserve_bots(built, snapshot)
 }
 
 pub fn merged_snapshot(
@@ -210,6 +235,7 @@ pub fn merged_snapshot(
         snapshot.graphql_poll_cost,
         snapshot.graphql_remaining,
     );
+    built.bots = snapshot.bots.clone();
     for group in &mut built.groups {
         for row in &mut group.items {
             let key = RowKey::from_row(row);
@@ -248,15 +274,39 @@ pub fn make_undo_record(
     row: &DashboardRow,
     comment_id: Option<u64>,
     body: &str,
+    write_labels_add: &[String],
+    write_labels_remove: &[String],
 ) -> UndoRecord {
     UndoRecord {
         key,
         previous_labels: row.labels.clone(),
+        undo_labels_remove: write_labels_add.clone(),
+        undo_labels_add: write_labels_remove.clone(),
         comment_id,
         wakes_agent: comment_starts_with_cursor(body),
         expires_at: Instant::now() + Duration::from_secs(UNDO_WINDOW_SECS),
+        write_finished_at: Utc::now(),
         owner: row.org.clone(),
         repo: row.repo.clone(),
         number: row.number,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn poll_postdates_write_when_fetched_at_is_later() {
+        let write_at = Utc::now();
+        let later = (write_at + chrono::Duration::seconds(5)).to_rfc3339();
+        assert!(poll_postdates_write(&later, write_at));
+    }
+
+    #[test]
+    fn poll_does_not_postdate_when_fetched_at_is_older() {
+        let write_at = Utc::now();
+        let earlier = (write_at - chrono::Duration::seconds(5)).to_rfc3339();
+        assert!(!poll_postdates_write(&earlier, write_at));
     }
 }

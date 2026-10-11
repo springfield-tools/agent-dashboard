@@ -108,6 +108,7 @@ pub fn build_comment_body(
     row: &DashboardRow,
     labels: &LabelsConfig,
     note: &str,
+    for_confirm: bool,
 ) -> Result<String, String> {
     let trimmed_note = note.trim();
     let body = match action {
@@ -119,9 +120,13 @@ pub fn build_comment_body(
         }
         RowActionKind::Answer => {
             if trimmed_note.is_empty() {
-                return Err("Answer text is required.".to_string());
+                if for_confirm {
+                    return Err("Answer text is required.".to_string());
+                }
+                agent_body("(type your answer above)", "")
+            } else {
+                agent_body(trimmed_note, "")
             }
-            agent_body(trimmed_note, "")
         }
     };
     validate_comment_body(&body)?;
@@ -171,7 +176,7 @@ pub fn preview_action(
     note: &str,
 ) -> Result<RowActionPreview, String> {
     let (add, remove) = label_diff_for_action(action, &row.labels, labels);
-    let comment_body = build_comment_body(action, row, labels, note)?;
+    let comment_body = build_comment_body(action, row, labels, note, false)?;
     Ok(RowActionPreview {
         action,
         labels_to_add: add,
@@ -282,6 +287,7 @@ mod tests {
             &sample_pr(),
             &labels,
             "fix pls",
+            true,
         )
         .expect("body");
         assert!(body.starts_with("@cursor "));
@@ -297,6 +303,7 @@ mod tests {
             &sample_pr(),
             &labels,
             "",
+            true,
         )
         .expect("body");
         assert!(!body.starts_with("@cursor"));
@@ -304,9 +311,17 @@ mod tests {
     }
 
     #[test]
+    fn answer_preview_allows_empty_note() {
+        let labels = sample_labels();
+        let body = build_comment_body(RowActionKind::Answer, &sample_pr(), &labels, "", false)
+            .expect("preview");
+        assert!(body.starts_with("@cursor "));
+    }
+
+    #[test]
     fn answer_requires_text() {
         let labels = sample_labels();
-        let err = build_comment_body(RowActionKind::Answer, &sample_pr(), &labels, "  ")
+        let err = build_comment_body(RowActionKind::Answer, &sample_pr(), &labels, "  ", true)
             .unwrap_err();
         assert!(err.contains("required"));
     }

@@ -42,6 +42,14 @@ fn auth_headers(token: &str) -> reqwest::header::HeaderMap {
     headers
 }
 
+fn github_message_from_body(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body)?;
+    value
+        .get("message")
+        .and_then(|m| m.as_str())
+        .map(|s| s.to_string())
+}
+
 fn classify(status: u16, body: &str) -> RestWriteError {
     if status == 401 {
         return RestWriteError::Unauthorized;
@@ -51,10 +59,10 @@ fn classify(status: u16, body: &str) -> RestWriteError {
             message: permission_banner(),
         };
     }
-    RestWriteError::GitHub {
-        status,
-        message: body.chars().take(500).collect(),
-    }
+    let message = github_message_from_body(body)
+        .map(|m| format!("GitHub error {status}: {m}"))
+        .unwrap_or_else(|| format!("GitHub error {status}."));
+    RestWriteError::GitHub { status, message }
 }
 
 #[derive(Debug, Deserialize)]
@@ -301,5 +309,102 @@ mod tests {
         let err = classify(res.status().as_u16(), "nope");
         assert!(matches!(err, RestWriteError::Forbidden { .. }));
         assert!(permission_banner().contains("403"));
+    }
+
+    #[test]
+    fn github_error_uses_message_field_not_raw_body() {
+        let err = classify(422, r#"{"message":"Validation Failed","errors":[]}"#);
+        match err {
+            RestWriteError::GitHub { status, message } => {
+                assert_eq!(status, 422);
+                assert_eq!(message, "GitHub error 422: Validation Failed");
+                assert!(!message.contains("errors"));
+            }
+            _ => panic!("expected GitHub error"),
+        }
+    }
+
+    #[tokio::test]
+    async fn label_step_fails_without_extra_comment_request() {
+        let server = MockServer::start();
+        let comment_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/repos/o/r/issues/3/comments");
+            then.status(201)
+                .json_body(serde_json::json!({ "id": 1 }));
+        });
+        server.mock(|when, then| {
+            when.method(DELETE)
+                .path("/repos/o/r/issues/3/labels/needs-testing");
+            then.status(500)
+                .json_body(serde_json::json!({ "message": "boom" }));
+        });
+
+        let client = Client::builder().build().unwrap();
+        let base = server.base_url();
+        let url = format!("{base}/repos/o/r/issues/3/comments");
+        let res = client
+            .post(&url)
+            .headers(auth_headers("tok"))
+            .json(&serde_json::json!({ "body": "audit" }))
+            .send()
+            .await
+            .unwrap();
+        assert!(res.status().is_success());
+        comment_mock.assert();
+
+        let err = apply_label_diff(
+            &client,
+            "tok",
+            "o",
+            "r",
+            3,
+            &["ready-to-merge".to_string()],
+            &["needs-testing".to_string()],
+        )
+        .await
+        .unwrap_err();
+        match err {
+            RestWriteError::GitHub { message, .. } => {
+                assert!(message.contains("GitHub error 500: boom"));
+            }
+            _ => panic!("expected label failure"),
+        }
+    }
+
+    #[tokio::test]
+    async fn undo_deletes_audit_comment_not_cursor() {
+        let server = MockServer::start();
+        let delete_mock = server.mock(|when, then| {
+            when.method(DELETE)
+                .path("/repos/o/r/issues/comments/55");
+            then.status(204);
+        });
+        let client = Client::builder().build().unwrap();
+        delete_issue_comment(&client, "tok", "o", "r", 55)
+            .await
+            .expect("delete");
+        delete_mock.assert();
+    }
+
+    #[tokio::test]
+    async fn comment_post_happens_once_per_flow() {
+        let server = MockServer::start();
+        let comment_mock = server.mock(|when, then| {
+            when.method(POST)
+                .path("/repos/o/r/issues/9/comments");
+            then.status(201)
+                .json_body(serde_json::json!({ "id": 9 }));
+        });
+        let client = Client::builder().build().unwrap();
+        let url = format!("{}/repos/o/r/issues/9/comments", server.base_url());
+        client
+            .post(&url)
+            .headers(auth_headers("tok"))
+            .json(&serde_json::json!({ "body": "once" }))
+            .send()
+            .await
+            .unwrap();
+        comment_mock.assert();
     }
 }
