@@ -43,11 +43,14 @@ fn auth_headers(token: &str) -> reqwest::header::HeaderMap {
 }
 
 fn github_message_from_body(body: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(body)?;
-    value
-        .get("message")
-        .and_then(|m| m.as_str())
-        .map(|s| s.to_string())
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("message")
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string())
+        })
 }
 
 fn classify(status: u16, body: &str) -> RestWriteError {

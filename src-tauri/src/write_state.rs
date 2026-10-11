@@ -280,8 +280,8 @@ pub fn make_undo_record(
     UndoRecord {
         key,
         previous_labels: row.labels.clone(),
-        undo_labels_remove: write_labels_add.clone(),
-        undo_labels_add: write_labels_remove.clone(),
+        undo_labels_remove: write_labels_add.to_vec(),
+        undo_labels_add: write_labels_remove.to_vec(),
         comment_id,
         wakes_agent: comment_starts_with_cursor(body),
         expires_at: Instant::now() + Duration::from_secs(UNDO_WINDOW_SECS),
