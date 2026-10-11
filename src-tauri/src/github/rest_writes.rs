@@ -511,11 +511,21 @@ mod tests {
 
         let body = "Testing passed. Ready to merge.\n\n— Agent Dashboard";
 
+        let write_remove_needs_testing = server.mock(|when, then| {
+            when.method(DELETE)
+                .path("/repos/o/r/issues/5/labels/needs-testing");
+            then.status(200);
+        });
+        let write_add_ready = server.mock(|when, then| {
+            when.method(POST).path("/repos/o/r/issues/5/labels");
+            then.status(200);
+        });
         let write_comment = server.mock(|when, then| {
             when.method(POST).path(format!("{issue_path}/comments"));
             then.status(201)
                 .json_body(serde_json::json!({ "id": 42 }));
         });
+
         let comment_id = post_issue_comment_at(
             &client,
             &base,
@@ -530,15 +540,6 @@ mod tests {
         assert_eq!(comment_id, 42);
         write_comment.assert();
 
-        let write_remove_needs_testing = server.mock(|when, then| {
-            when.method(DELETE)
-                .path("/repos/o/r/issues/5/labels/needs-testing");
-            then.status(200);
-        });
-        let write_add_ready = server.mock(|when, then| {
-            when.method(POST).path("/repos/o/r/issues/5/labels");
-            then.status(200);
-        });
         let write_labels_to_add = write_add.clone();
         let write_labels_to_remove = write_remove.clone();
         apply_label_diff_at(
