@@ -516,7 +516,6 @@ mod tests {
                 .path("/repos/o/r/issues/5/labels/needs-testing");
             then.status(200);
         });
-        let write_labels_to_add = vec!["ready-to-merge".to_string()];
         remove_label_at(
             &client,
             &base,
@@ -534,17 +533,15 @@ mod tests {
             when.method(POST).path("/repos/o/r/issues/5/labels");
             then.status(200);
         });
-        add_labels_at(
-            &client,
-            &base,
-            token,
-            owner,
-            repo,
-            number,
-            &write_labels_to_add,
-        )
-        .await
-        .expect("write add ready-to-merge");
+        let write_labels_url = format!("{base}/repos/o/r/issues/5/labels");
+        let write_add_res = client
+            .post(&write_labels_url)
+            .headers(auth_headers(token))
+            .json(&serde_json::json!(["ready-to-merge"]))
+            .send()
+            .await
+            .expect("write add ready-to-merge");
+        assert!(write_add_res.status().is_success());
         write_add_ready.assert();
 
         let comment_id = 42u64;
@@ -591,18 +588,15 @@ mod tests {
             when.method(POST).path("/repos/o/r/issues/5/labels");
             then.status(200);
         });
-        let undo_labels_to_add = vec!["needs-testing".to_string()];
-        add_labels_at(
-            &client,
-            &base,
-            token,
-            owner,
-            repo,
-            number,
-            &undo_labels_to_add,
-        )
-        .await
-        .expect("undo add needs-testing");
+        let undo_labels_url = format!("{base}/repos/o/r/issues/5/labels");
+        let undo_add_res = client
+            .post(&undo_labels_url)
+            .headers(auth_headers(token))
+            .json(&serde_json::json!(["needs-testing"]))
+            .send()
+            .await
+            .expect("undo add needs-testing");
+        assert!(undo_add_res.status().is_success());
         undo_add_needs_testing.assert();
 
         delete_issue_comment_at(&client, &base, token, owner, repo, comment_id)
