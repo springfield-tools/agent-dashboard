@@ -434,6 +434,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn apply_label_diff_at_remove_then_add() {
+        let server = MockServer::start();
+        let base = server.base_url();
+        let remove_mock = server.mock(|when, then| {
+            when.method(DELETE)
+                .path("/repos/o/r/issues/5/labels/needs-testing");
+            then.status(200);
+        });
+        let add_mock = server.mock(|when, then| {
+            when.method(POST).path("/repos/o/r/issues/5/labels");
+            then.status(200);
+        });
+        let client = Client::builder().build().unwrap();
+        let to_add = vec!["ready-to-merge".to_string()];
+        let to_remove = vec!["needs-testing".to_string()];
+        apply_label_diff_at(
+            &client,
+            &base,
+            "tok",
+            "o",
+            "r",
+            5,
+            &to_add,
+            &to_remove,
+        )
+        .await
+        .expect("label diff");
+        remove_mock.assert();
+        add_mock.assert();
+    }
+
+    #[tokio::test]
     async fn testing_passed_write_then_undo_restores_labels_and_deletes_comment() {
         use crate::model::{CiSnapshot, DashboardRow, ItemKind};
         use crate::row_actions::{label_diff_for_action, RowActionKind};
@@ -503,23 +535,24 @@ mod tests {
                 .path(format!("{issue_path}/labels/needs-testing"));
             then.status(200);
         });
+        remove_label_at(&client, &base, token, owner, repo, number, "needs-testing")
+            .await
+            .expect("write remove needs-testing");
+        write_remove_needs_testing.assert();
+
         let write_add_ready = server.mock(|when, then| {
             when.method(POST).path(format!("{issue_path}/labels"));
             then.status(200);
         });
-        apply_label_diff_at(
-            &client,
-            &base,
-            token,
-            owner,
-            repo,
-            number,
-            &write_add,
-            &write_remove,
-        )
-        .await
-        .expect("write label diff");
-        write_remove_needs_testing.assert();
+        let labels_url = format!("{base}{issue_path}/labels");
+        let add_res = client
+            .post(&labels_url)
+            .headers(auth_headers(token))
+            .json(&serde_json::json!(["ready-to-merge"]))
+            .send()
+            .await
+            .expect("write add ready-to-merge");
+        assert!(add_res.status().is_success());
         write_add_ready.assert();
 
         let undo = make_undo_record(
@@ -552,6 +585,8 @@ mod tests {
             then.status(204);
         });
 
+        let undo_add = undo.undo_labels_add.clone();
+        let undo_remove = undo.undo_labels_remove.clone();
         apply_undo_label_diff_at(
             &client,
             &base,
@@ -559,8 +594,8 @@ mod tests {
             owner,
             repo,
             number,
-            &undo.undo_labels_add,
-            &undo.undo_labels_remove,
+            &undo_add,
+            &undo_remove,
         )
         .await
         .expect("undo label diff");
