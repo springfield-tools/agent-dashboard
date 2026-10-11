@@ -128,6 +128,18 @@ async fn execute_inner(
 
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
     let snapshot = lock_dashboard(state.as_ref())?;
+    let row_for_token = {
+        let write_guard = state.write_state.lock().map_err(|_| "write lock")?;
+        let merged = merged_snapshot(
+            &snapshot,
+            &config,
+            &write_guard.optimistic_labels,
+            &write_guard.pending,
+        );
+        find_row(&merged, &key).ok_or_else(|| "Row not found.".to_string())?
+    };
+    let token = github_token_for_org(state.as_ref(), &row_for_token.org)?;
+
     let (row, to_add, to_remove, body) = {
         let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
         let merged = merged_snapshot(
@@ -151,7 +163,6 @@ async fn execute_inner(
         state.set_dashboard(optimistic_snapshot);
         (row, to_add, to_remove, body)
     };
-    let token = github_token_for_org(state.as_ref(), &row.org)?;
     let _ = app.emit("dashboard-updated", ());
 
     let comment_result =
@@ -259,6 +270,18 @@ pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(),
         .map_err(|e| e.to_string())?;
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
 
+    let undo_peek = {
+        let write_guard = state.write_state.lock().map_err(|_| "write lock")?;
+        write_guard
+            .undo
+            .as_ref()
+            .ok_or_else(|| "Nothing to undo.".to_string())?
+            .key
+            .org
+            .clone()
+    };
+    let token = github_token_for_org(state_ref, &undo_peek)?;
+
     let undo = {
         let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
         write_guard
@@ -267,7 +290,6 @@ pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(),
     };
 
     let snapshot = lock_dashboard(state_ref)?;
-    let token = github_token_for_org(state_ref, &undo.key.org)?;
 
     let label_result = apply_label_diff(
         &client,
@@ -319,6 +341,18 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
         .user_agent("agent-dashboard")
         .build()
         .map_err(|e| e.to_string())?;
+    let org_for_token = {
+        let write_guard = state.write_state.lock().map_err(|_| "write lock")?;
+        write_guard
+            .partial
+            .as_ref()
+            .ok_or_else(|| "No failed step to retry.".to_string())?
+            .key
+            .org
+            .clone()
+    };
+    let token = github_token_for_org(state_ref, &org_for_token)?;
+
     let partial = {
         let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
         write_guard
@@ -326,7 +360,6 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
             .take()
             .ok_or_else(|| "No failed step to retry.".to_string())?
     };
-    let token = github_token_for_org(state_ref, &partial.key.org)?;
 
     apply_label_diff(
         &client,

@@ -103,7 +103,11 @@ pub fn load_token_for_org(org: &str) -> Result<Option<String>, KeychainError> {
 }
 
 pub fn delete_token_for_org(org: &str) -> Result<(), KeychainError> {
-    delete_token_for_account(&account_for_org(org))
+    delete_token_for_account(&account_for_org(org))?;
+    if org == "springfield-ham-radio" {
+        let _ = delete_token_for_account(LEGACY_ACCOUNT);
+    }
+    Ok(())
 }
 
 pub fn has_token_for_org(org: &str) -> bool {

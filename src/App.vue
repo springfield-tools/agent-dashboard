@@ -358,19 +358,18 @@
           <code>gh auth login</code> if you see an auth banner. Check names in CI rollup may work
           better than a fine-grained PAT.
         </p>
-        <template v-else>
-          <p class="settings-hint">
-            Each org can use <code>credential = "keychain"</code> (per-org Keychain item) or
-            <code>credential = "gh"</code> on that <code>[[orgs]]</code> row. Fine-grained PATs need
-            Metadata and Commit statuses (Read); row actions need Issues and Pull requests
-            <strong>Read and write</strong>. Tokens stay in Keychain only — never in config or
-            snapshot.
-          </p>
-          <div
-            v-for="entry in configStatus?.orgAuth ?? []"
-            :key="entry.name"
-            class="org-token-block"
-          >
+        <p class="settings-hint">
+          Each org can use <code>credential = "keychain"</code> (per-org Keychain item) or
+          <code>credential = "gh"</code> on that <code>[[orgs]]</code> row. Fine-grained PATs need
+          Metadata and Commit statuses (Read); row actions need Issues and Pull requests
+          <strong>Read and write</strong>. Tokens stay in Keychain only — never in config or
+          snapshot.
+        </p>
+        <div
+          v-for="entry in configStatus?.orgAuth ?? []"
+          :key="entry.name"
+          class="org-token-block"
+        >
             <h3 class="settings-subtitle">
               {{ entry.name }}
               <span class="org-auth-pill" :class="{ ready: entry.ready }">
@@ -402,12 +401,11 @@
                 </button>
               </div>
             </template>
-            <p v-else class="settings-hint">
-              Uses <code>gh auth token</code> for this org (shared CLI session).
-            </p>
-          </div>
-          <p v-if="tokenMessage" class="settings-message">{{ tokenMessage }}</p>
-        </template>
+          <p v-else class="settings-hint">
+            Uses <code>gh auth token</code> for this org (shared CLI session).
+          </p>
+        </div>
+        <p v-if="tokenMessage" class="settings-message">{{ tokenMessage }}</p>
         <div class="settings-actions">
           <button type="button" class="btn-text" @click="settingsOpen = false">Close</button>
         </div>

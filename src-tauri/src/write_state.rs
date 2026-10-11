@@ -180,8 +180,18 @@ fn raw_from_row(row: &DashboardRow) -> RawItem {
     }
 }
 
-fn preserve_bots(mut built: DashboardSnapshot, from: &DashboardSnapshot) -> DashboardSnapshot {
+fn preserve_poll_meta(mut built: DashboardSnapshot, from: &DashboardSnapshot) -> DashboardSnapshot {
     built.bots = from.bots.clone();
+    built.graphql_poll_cost = from.graphql_poll_cost;
+    built.graphql_remaining = from.graphql_remaining;
+    built.graphql_budgets = from.graphql_budgets.clone();
+    for section in &mut built.org_sections {
+        if let Some(prev) = from.org_sections.iter().find(|s| s.org == section.org) {
+            if section.auth_banner.is_none() {
+                section.auth_banner = prev.auth_banner.clone();
+            }
+        }
+    }
     built
 }
 
@@ -205,7 +215,7 @@ pub fn apply_optimistic_labels(
         snapshot.graphql_poll_cost,
         snapshot.graphql_remaining,
     );
-    preserve_bots(built, snapshot)
+    preserve_poll_meta(built, snapshot)
 }
 
 pub fn merged_snapshot(

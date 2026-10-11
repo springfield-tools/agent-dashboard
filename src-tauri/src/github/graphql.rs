@@ -148,7 +148,7 @@ query Dashboard($searchQuery: String!, $after: String) {
 }
 ";
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum GraphqlError {
     #[error("graphql: {0}")]
     GraphQl(String),
@@ -867,6 +867,7 @@ pub struct MultiOrgFetchResult {
     pub rate_limit: Option<RateLimitInfo>,
     pub budgets: Vec<GraphqlBudgetLine>,
     pub org_errors: HashMap<String, String>,
+    pub org_graphql_errors: HashMap<String, GraphqlError>,
     pub warning: Option<String>,
     pub empty_hint: Option<String>,
     pub repos_visible: u32,
@@ -901,6 +902,7 @@ pub async fn fetch_all_orgs_multi(
     let mut rate_limit = None;
     let mut budget_map: HashMap<String, GraphqlBudgetLine> = HashMap::new();
     let mut org_errors = HashMap::new();
+    let mut org_graphql_errors = HashMap::new();
     let mut warning = None;
     let mut empty_hint = None;
     let mut repos_visible = 0u32;
@@ -930,16 +932,13 @@ pub async fn fetch_all_orgs_multi(
             Err(e) => {
                 let message = org_fetch_error_message(org, &e);
                 org_errors.insert(org.name.clone(), message);
+                org_graphql_errors.insert(org.name.clone(), e.clone());
                 log::warn!("org {} fetch failed: {}", org.name, e);
             }
         }
     }
 
-    let budgets: Vec<GraphqlBudgetLine> = config
-        .orgs
-        .iter()
-        .filter_map(|o| budget_map.get(&graphql_budget_key(o, config)).cloned())
-        .collect();
+    let budgets: Vec<GraphqlBudgetLine> = budget_map.values().cloned().collect();
 
     if !budget_map.is_empty() {
         let reset_at = rate_limit
@@ -958,6 +957,7 @@ pub async fn fetch_all_orgs_multi(
         rate_limit,
         budgets,
         org_errors,
+        org_graphql_errors,
         warning,
         empty_hint,
         repos_visible,

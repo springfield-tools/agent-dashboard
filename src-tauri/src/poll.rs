@@ -9,9 +9,10 @@ use tokio::sync::Notify;
 use crate::backoff::{wait_seconds_for_failure, FailureKind};
 use crate::brakes::{apply_brakes, brake_slow_interval_for_cost, LOW_REMAINING_STOP};
 use crate::config::{save_config, AppConfig, DEFAULT_POLL_INTERVAL};
-use crate::credential::obtain_github_token_for_org;
+use crate::credential::{clear_gh_session_cache, obtain_github_token_for_org, org_uses_gh};
 use crate::etag_probe::{evaluate_probe, should_skip_graphql_after_org_probes};
-use crate::github::fetch_all_orgs_multi;
+use crate::github::{fetch_all_orgs_multi, GraphqlError};
+use crate::write_state::snapshot_rows_to_raw;
 use crate::idle;
 use crate::model::build_dashboard;
 use crate::config::OrgConfig;
@@ -444,6 +445,46 @@ pub async fn run_poll_cycle<R: Runtime>(
         })
         .await;
 
+        for (org_name, err) in &fetch.org_graphql_errors {
+            if matches!(err, GraphqlError::Unauthorized) {
+                let uses_gh = config
+                    .orgs
+                    .iter()
+                    .any(|o| o.name == *org_name && org_uses_gh(o, &config));
+                if uses_gh {
+                    clear_gh_session_cache(&state.poll_runtime.gh_token_cache);
+                }
+            }
+        }
+        for err in fetch.org_graphql_errors.values() {
+            if let GraphqlError::RateLimited {
+                retry_after_secs,
+                reset_at,
+                primary_exhausted,
+                message,
+            } = err
+            {
+                let nanos = Utc::now().timestamp_subsec_nanos();
+                if primary_exhausted {
+                    if let Some(ref reset) = reset_at {
+                        set_primary_rate_limit_until(&state.poll_runtime, reset, nanos);
+                    } else {
+                        set_secondary_rate_limit_until(&state.poll_runtime, 300, nanos);
+                    }
+                } else if let Some(retry) = retry_after_secs {
+                    set_secondary_rate_limit_until(&state.poll_runtime, retry, nanos);
+                } else if let Some(ref reset) = reset_at {
+                    set_primary_rate_limit_until(&state.poll_runtime, reset, nanos);
+                } else {
+                    set_secondary_rate_limit_until(&state.poll_runtime, 60, nanos);
+                }
+                state.set_banner(Some(
+                    "GitHub rate limit. Will retry after the reset window.".to_string(),
+                ));
+                log::warn!("rate limited: {message}");
+            }
+        }
+
         if fetch.items.is_empty() && fetch.org_errors.len() == config.orgs.len() && !config.orgs.is_empty() {
             let message = fetch
                 .org_errors
@@ -452,13 +493,26 @@ pub async fn run_poll_cycle<R: Runtime>(
                 .cloned()
                 .unwrap_or_else(|| "No org credentials available.".to_string());
             state.set_auth_error(Some(message));
+            if fetch
+                .org_graphql_errors
+                .values()
+                .any(|e| matches!(e, GraphqlError::Network(_)))
+            {
+                state.set_offline(true);
+            }
             return Ok(());
         }
 
         state.set_auth_error(None);
-        state.set_offline(false);
-        if let Ok(mut guard) = state.poll_runtime.rate_limit_until.lock() {
-            *guard = None;
+        let any_network = fetch
+            .org_graphql_errors
+            .values()
+            .any(|e| matches!(e, GraphqlError::Network(_)));
+        state.set_offline(any_network && fetch.items.is_empty());
+        if fetch.org_errors.is_empty() {
+            if let Ok(mut guard) = state.poll_runtime.rate_limit_until.lock() {
+                *guard = None;
+            }
         }
         if fetch.items.is_empty() {
             if let Some(hint) = fetch.empty_hint {
@@ -477,6 +531,26 @@ pub async fn run_poll_cycle<R: Runtime>(
             state.set_banner(None);
         }
 
+        let previous = state
+            .dashboard
+            .lock()
+            .map(|d| d.clone())
+            .unwrap_or_else(|_| crate::model::build_dashboard_simple(vec![], &config, "", None, None));
+        let mut merged_items = fetch.items;
+        for org_name in fetch.org_errors.keys() {
+            for item in snapshot_rows_to_raw(&previous) {
+                if item.org != *org_name {
+                    continue;
+                }
+                let duplicate = merged_items.iter().any(|i| {
+                    i.org == item.org && i.repo == item.repo && i.number == item.number
+                });
+                if !duplicate {
+                    merged_items.push(item);
+                }
+            }
+        }
+
         let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
         let (poll_cost, poll_remaining) = fetch
             .rate_limit
@@ -484,7 +558,7 @@ pub async fn run_poll_cycle<R: Runtime>(
             .map(|rl| (Some(rl.cost), Some(rl.remaining)))
             .unwrap_or((None, None));
         let snapshot = build_dashboard(
-            fetch.items,
+            merged_items,
             &config,
             &fetched_at,
             poll_cost,
