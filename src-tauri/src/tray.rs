@@ -203,7 +203,7 @@ pub fn trigger_refresh<R: Runtime>(app: &tauri::AppHandle<R>, force: bool) {
     tauri::async_runtime::spawn(async move {
         if let Some(state) = app_handle.try_state::<Arc<AppState>>() {
             let client = reqwest::Client::new();
-            let _ = run_poll_cycle(&app_handle, state.inner(), &client, force).await;
+            let _ = run_poll_cycle(&app_handle, state.inner(), &client, force, force).await;
         }
     });
 }

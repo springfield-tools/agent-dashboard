@@ -36,7 +36,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("dir");
         let path = dir.join("snapshot.json");
         let config = AppConfig::default();
-        let snapshot = build_dashboard(vec![], &config, "2026-10-10T12:00:00Z");
+        let snapshot = build_dashboard(vec![], &config, "2026-10-10T12:00:00Z", None, None);
         write_snapshot_file(&path, &snapshot).expect("write");
         let loaded = load_snapshot_file(&path).expect("load");
         assert_eq!(loaded.schema_version, 1);

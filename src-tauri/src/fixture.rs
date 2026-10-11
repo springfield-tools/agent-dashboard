@@ -18,7 +18,7 @@ mod tests {
     fn fixture_matches_phase2_acceptance_counts() {
         let items = load_checked_in_items();
         assert_eq!(items.len(), 33);
-        let snapshot = build_dashboard(items, &AppConfig::default(), "2026-10-10T20:00:00Z");
+        let snapshot = build_dashboard(items, &AppConfig::default(), "2026-10-10T20:00:00Z", None, None);
         let bots = snapshot.bots.expect("collapsed bot footer");
         assert_eq!(bots.green, 29);
         assert_eq!(bots.no_ci, 2);

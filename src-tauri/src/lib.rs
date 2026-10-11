@@ -167,7 +167,7 @@ fn refresh_now(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Result
         let state = state.inner().clone();
         tauri::async_runtime::spawn(async move {
             let client = reqwest::Client::new();
-            let _ = poll::run_poll_cycle(&app, &state, &client, true).await;
+            let _ = poll::run_poll_cycle(&app, &state, &client, true, true).await;
         });
     }
     Ok(())

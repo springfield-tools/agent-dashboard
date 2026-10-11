@@ -47,6 +47,8 @@ export type DashboardSnapshot = {
   bots: BotFooter | null;
   trayTitle: string;
   trayTooltip: string;
+  graphqlPollCost?: number | null;
+  graphqlRemaining?: number | null;
 };
 
 export type ConfigStatus = {

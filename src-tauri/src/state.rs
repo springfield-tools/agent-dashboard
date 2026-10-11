@@ -35,15 +35,15 @@ impl AppState {
         let dashboard = if fixture_mode {
             let items = load_checked_in_items();
             let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            build_dashboard(items, &config, &fetched_at)
+            build_dashboard(items, &config, &fetched_at, None, None)
         } else if let Some(path) = snapshot_path.as_ref() {
             load_snapshot_file(path).unwrap_or_else(|| {
                 let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-                build_dashboard(vec![], &config, &fetched_at)
+                build_dashboard(vec![], &config, &fetched_at, None, None)
             })
         } else {
             let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-            build_dashboard(vec![], &config, &fetched_at)
+            build_dashboard(vec![], &config, &fetched_at, None, None)
         };
         let etag_store = EtagStore::load(
             config_path
@@ -93,7 +93,7 @@ impl AppState {
         let config = self.config.lock().map(|c| c.clone()).unwrap_or_default();
         let items = load_checked_in_items();
         let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let snapshot = build_dashboard(items, &config, &fetched_at);
+        let snapshot = build_dashboard(items, &config, &fetched_at, None, None);
         self.set_dashboard(snapshot);
     }
 }

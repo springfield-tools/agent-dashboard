@@ -101,6 +101,7 @@
           · {{ snapshot.bots.failing }} failing
         </template>
       </button>
+      <span v-if="graphqlBudgetLabel" class="footer-budget">{{ graphqlBudgetLabel }}</span>
       <span v-if="configStatus" class="footer-path">{{ configStatus.configPath }}</span>
     </footer>
 
@@ -202,6 +203,17 @@ const fetchedLabel = computed(() => {
     return '—';
   }
   return formatRelativeTime(snapshot.value.fetchedAt);
+});
+
+const graphqlBudgetLabel = computed(() => {
+  const cost = snapshot.value?.graphqlPollCost;
+  const remaining = snapshot.value?.graphqlRemaining;
+  if (cost == null && remaining == null) {
+    return '';
+  }
+  const pts = cost != null ? `${cost} pts/poll` : '— pts/poll';
+  const left = remaining != null ? `${remaining.toLocaleString()} left` : '— left';
+  return `${pts} · ${left}`;
 });
 
 const intervalLabel = computed(() => {

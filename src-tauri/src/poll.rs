@@ -30,6 +30,8 @@ pub struct PollRuntime {
     last_rate_remaining: Mutex<Option<i32>>,
     last_rate_reset_at: Mutex<Option<String>>,
     pub idle_pause_active: AtomicBool,
+    /// Consumed by the poll loop for a single post-wake refresh.
+    pub pending_wake: AtomicBool,
 }
 
 impl PollRuntime {
@@ -45,11 +47,16 @@ impl PollRuntime {
             last_rate_remaining: Mutex::new(None),
             last_rate_reset_at: Mutex::new(None),
             idle_pause_active: AtomicBool::new(false),
+            pending_wake: AtomicBool::new(false),
         }
     }
 
     pub fn is_idle_paused(&self) -> bool {
         self.idle_pause_active.load(Ordering::SeqCst)
+    }
+
+    pub fn rate_limit_is_active(&self) -> bool {
+        rate_limit_wait_secs(self) > 0
     }
 }
 
@@ -75,23 +82,20 @@ fn rate_limit_wait_secs(runtime: &PollRuntime) -> u64 {
     }
 }
 
-fn set_rate_limit_until(
-    runtime: &PollRuntime,
-    retry_after_secs: Option<u64>,
-    reset_at: Option<&str>,
-    nanos: u32,
-) {
-    let until = if let Some(secs) = retry_after_secs {
-        Utc::now() + chrono::Duration::seconds(secs as i64)
-    } else if let Some(reset) = reset_at {
-        DateTime::parse_from_rfc3339(reset)
-            .map(|t| t.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now() + chrono::Duration::minutes(5))
-    } else {
-        Utc::now() + chrono::Duration::minutes(5)
-    };
+fn set_primary_rate_limit_until(runtime: &PollRuntime, reset_at: &str, nanos: u32) {
+    let until = DateTime::parse_from_rfc3339(reset_at)
+        .map(|t| t.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now() + chrono::Duration::minutes(5));
     let extra = 1 + (nanos as u64 % 5);
     let until = until + chrono::Duration::seconds(extra as i64);
+    if let Ok(mut guard) = runtime.rate_limit_until.lock() {
+        *guard = Some(until);
+    }
+}
+
+fn set_secondary_rate_limit_until(runtime: &PollRuntime, retry_after_secs: u64, nanos: u32) {
+    let wait = crate::backoff::jitter_seconds(retry_after_secs, nanos);
+    let until = Utc::now() + chrono::Duration::seconds(wait as i64);
     if let Ok(mut guard) = runtime.rate_limit_until.lock() {
         *guard = Some(until);
     }
@@ -146,14 +150,42 @@ fn update_idle_pause<R: Runtime>(app: &AppHandle<R>, state: &Arc<AppState>) -> I
     IdleTransition::None
 }
 
+fn spawn_idle_monitor<R: Runtime>(app: AppHandle<R>, state: Arc<AppState>, runtime: Arc<PollRuntime>) {
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let pause_when_idle = state
+                .config
+                .lock()
+                .map(|c| c.pause_when_idle)
+                .unwrap_or(false);
+            if !pause_when_idle {
+                continue;
+            }
+            if state
+                .config
+                .lock()
+                .map(|c| is_polling_paused(&c.poll_pause))
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let transition = update_idle_pause(&app, &state);
+            if transition == IdleTransition::ResumedFromIdle && !runtime.rate_limit_is_active() {
+                runtime.pending_wake.store(true, Ordering::SeqCst);
+                runtime.wake.notify_one();
+            }
+        }
+    });
+}
+
 pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<PollRuntime>) {
+    spawn_idle_monitor(app.clone(), state.clone(), runtime.clone());
     tauri::async_runtime::spawn(async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
             .expect("http client");
-
-        let mut last_loop_wall = Utc::now();
 
         loop {
             let interval_secs = {
@@ -164,7 +196,17 @@ pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<
                     .unwrap_or(30)
             };
 
-            let idle_transition = update_idle_pause(&app, &state);
+            let pause_when_idle = state
+                .config
+                .lock()
+                .map(|c| c.pause_when_idle)
+                .unwrap_or(false);
+            let idle_transition = if pause_when_idle {
+                IdleTransition::None
+            } else {
+                update_idle_pause(&app, &state)
+            };
+            let wake_refresh = state.poll_runtime.pending_wake.swap(false, Ordering::SeqCst);
 
             if !state.fixture_mode {
                 let mut resumed_from_timed_pause = false;
@@ -184,12 +226,26 @@ pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<
                     .map(|c| is_polling_paused(&c.poll_pause))
                     .unwrap_or(false);
                 let idle_paused = state.poll_runtime.is_idle_paused();
+                let rate_blocked = state.poll_runtime.rate_limit_is_active();
 
-                if !user_paused && !idle_paused {
-                    if resumed_from_timed_pause || idle_transition == IdleTransition::ResumedFromIdle {
-                        let _ = run_poll_cycle(&app, &state, &client, true).await;
+                if !user_paused && !rate_blocked {
+                    let force = resumed_from_timed_pause
+                        || idle_transition == IdleTransition::ResumedFromIdle;
+                    let bypass_idle = wake_refresh;
+                    let should_poll = if idle_paused {
+                        bypass_idle || force
                     } else {
-                        let _ = run_poll_cycle(&app, &state, &client, false).await;
+                        true
+                    };
+                    if should_poll {
+                        let _ = run_poll_cycle(
+                            &app,
+                            &state,
+                            &client,
+                            force,
+                            bypass_idle,
+                        )
+                        .await;
                     }
                 } else if user_paused || idle_paused {
                     #[cfg(target_os = "macos")]
@@ -268,13 +324,6 @@ pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<
             let sleep_secs = apply_jitter(sleep_secs);
             let deadline = Utc::now() + chrono::Duration::seconds(sleep_secs as i64);
             let _ = sleep_until_deadline(&runtime, deadline).await;
-
-            let gap = (Utc::now() - last_loop_wall).num_seconds();
-            last_loop_wall = Utc::now();
-            #[cfg(not(target_os = "macos"))]
-            if gap > (interval_secs * 2).max(90) {
-                crate::power::handle_system_wake(&app, &state);
-            }
         }
     });
 }
@@ -284,6 +333,7 @@ pub async fn run_poll_cycle<R: Runtime>(
     state: &Arc<AppState>,
     client: &reqwest::Client,
     force: bool,
+    bypass_idle: bool,
 ) -> Result<(), String> {
     if state.fixture_mode {
         return Ok(());
@@ -294,7 +344,13 @@ pub async fn run_poll_cycle<R: Runtime>(
         .lock()
         .map(|c| is_polling_paused(&c.poll_pause))
         .unwrap_or(false);
-    if (user_paused || state.poll_runtime.is_idle_paused()) && !force {
+    if user_paused && !force {
+        return Ok(());
+    }
+    if state.poll_runtime.is_idle_paused() && !force && !bypass_idle {
+        return Ok(());
+    }
+    if state.poll_runtime.rate_limit_is_active() && !force {
         return Ok(());
     }
 
@@ -337,15 +393,23 @@ pub async fn run_poll_cycle<R: Runtime>(
             let mut skip_all = true;
             let mut combined_banner = None;
             for org in &config.orgs {
-                let probe = evaluate_probe(
+                let probe = match evaluate_probe(
                     client,
                     &token,
                     &config,
                     org,
                     &state.etag_store,
                     &last_fetched,
+                    "https://api.github.com",
                 )
-                .await?;
+                .await
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::warn!("etag probe failed, falling back to GraphQL: {e}");
+                        break;
+                    }
+                };
                 if !probe.skip_graphql {
                     skip_all = false;
                     break;
@@ -389,32 +453,35 @@ pub async fn run_poll_cycle<R: Runtime>(
                 GraphqlError::RateLimited {
                     retry_after_secs,
                     reset_at,
+                    primary_exhausted,
                     message,
                 } => {
                     let nanos = Utc::now().timestamp_subsec_nanos();
-                    let kind = if retry_after_secs.is_some() {
-                        FailureKind::SecondaryRateLimit
+                    if primary_exhausted {
+                        if let Some(ref reset) = reset_at {
+                            set_primary_rate_limit_until(
+                                &state.poll_runtime,
+                                reset,
+                                nanos,
+                            );
+                        } else {
+                            set_secondary_rate_limit_until(
+                                &state.poll_runtime,
+                                300,
+                                nanos,
+                            );
+                        }
+                    } else if let Some(retry) = retry_after_secs {
+                        set_secondary_rate_limit_until(
+                            &state.poll_runtime,
+                            retry,
+                            nanos,
+                        );
+                    } else if let Some(ref reset) = reset_at {
+                        set_primary_rate_limit_until(&state.poll_runtime, reset, nanos);
                     } else {
-                        FailureKind::PrimaryRateLimit
-                    };
-                    let wait = wait_seconds_for_failure(
-                        kind,
-                        state
-                            .poll_runtime
-                            .failure_backoff_secs
-                            .lock()
-                            .map(|g| *g)
-                            .unwrap_or(0),
-                        retry_after_secs,
-                        reset_at.as_deref(),
-                        nanos,
-                    );
-                    set_rate_limit_until(
-                        &state.poll_runtime,
-                        Some(wait),
-                        reset_at.as_deref(),
-                        nanos,
-                    );
+                        set_secondary_rate_limit_until(&state.poll_runtime, 60, nanos);
+                    }
                     state.set_banner(Some(
                         "GitHub rate limit. Will retry after the reset window.".to_string(),
                     ));
@@ -459,7 +526,18 @@ pub async fn run_poll_cycle<R: Runtime>(
         }
 
         let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let snapshot = build_dashboard(fetch.items, &config, &fetched_at);
+        let (poll_cost, poll_remaining) = fetch
+            .rate_limit
+            .as_ref()
+            .map(|rl| (Some(rl.cost), Some(rl.remaining)))
+            .unwrap_or((None, None));
+        let snapshot = build_dashboard(
+            fetch.items,
+            &config,
+            &fetched_at,
+            poll_cost,
+            poll_remaining,
+        );
         state.set_dashboard(snapshot.clone());
         #[cfg(target_os = "macos")]
         tray::sync_tray_from_snapshot(app, &snapshot);
@@ -487,7 +565,11 @@ pub async fn run_poll_cycle<R: Runtime>(
             }
             if rl.remaining < LOW_REMAINING_STOP {
                 let nanos = Utc::now().timestamp_subsec_nanos();
-                set_rate_limit_until(&state.poll_runtime, None, Some(rl.reset_at.as_str()), nanos);
+                set_primary_rate_limit_until(
+                    &state.poll_runtime,
+                    rl.reset_at.as_str(),
+                    nanos,
+                );
             }
         }
 

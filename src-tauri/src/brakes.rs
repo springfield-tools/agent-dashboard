@@ -1,3 +1,5 @@
+use chrono::{DateTime, Local};
+
 /// GraphQL primary budget brakes (PLAN § Automatic brakes).
 pub const PROJECTED_HOUR_CAP: i64 = 2500;
 pub const LOW_REMAINING_SLOW_INTERVAL: u64 = 300;
@@ -41,8 +43,9 @@ pub fn apply_brakes(
         if remaining < LOW_REMAINING_STOP {
             sleep_secs = sleep_secs.max(LOW_REMAINING_SLOW_INTERVAL);
             if let Some(reset) = rate_reset_at {
+                let clock = format_reset_local(reset);
                 banner = Some(format!(
-                    "GraphQL budget very low ({remaining} remaining). Polling pauses until {reset}."
+                    "GraphQL budget very low ({remaining} remaining). Polling pauses until {clock}."
                 ));
             }
         } else if remaining < LOW_REMAINING_WARN {
@@ -60,6 +63,12 @@ pub fn apply_brakes(
         banner,
         log_high_cost,
     }
+}
+
+fn format_reset_local(reset_at: &str) -> String {
+    DateTime::parse_from_rfc3339(reset_at)
+        .map(|t| t.with_timezone(&Local).format("%H:%M").to_string())
+        .unwrap_or_else(|_| reset_at.to_string())
 }
 
 pub fn brake_slow_interval_for_cost(cost: i32, configured_interval: u64) -> u64 {
@@ -80,10 +89,10 @@ mod tests {
 
     #[test]
     fn slows_when_projected_hour_exceeds_cap() {
-        let slow = brake_slow_interval_for_cost(14, 15);
-        assert_eq!(slow, 21);
-        let outcome = apply_brakes(15, 14, Some(4000), None, slow);
-        assert!(outcome.sleep_secs >= 21);
+        let slow = brake_slow_interval_for_cost(22, 15);
+        assert_eq!(slow, 32);
+        let outcome = apply_brakes(15, 22, Some(4000), None, slow);
+        assert!(outcome.sleep_secs >= 32);
         assert!(outcome.banner.is_some());
     }
 

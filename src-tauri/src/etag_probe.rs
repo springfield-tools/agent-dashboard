@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use chrono::{DateTime, Utc};
@@ -19,6 +20,7 @@ struct EtagStoreFile {
 pub struct EtagStore {
     path: PathBuf,
     inner: Mutex<EtagStoreFile>,
+    dirty: AtomicBool,
 }
 
 impl EtagStore {
@@ -34,16 +36,21 @@ impl EtagStore {
         Self {
             path,
             inner: Mutex::new(inner),
+            dirty: AtomicBool::new(false),
         }
     }
 
     fn save(&self) -> Result<(), String> {
+        if !self.dirty.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         let guard = self.inner.lock().map_err(|_| "etag lock")?;
         let json = serde_json::to_string_pretty(&*guard).map_err(|e| e.to_string())?;
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         }
         std::fs::write(&self.path, json).map_err(|e| e.to_string())?;
+        self.dirty.store(false, Ordering::SeqCst);
         Ok(())
     }
 
@@ -55,10 +62,18 @@ impl EtagStore {
     }
 
     pub fn set_repo_etag(&self, repo_key: &str, etag: String) -> Result<(), String> {
+        let mut changed = false;
         if let Ok(mut guard) = self.inner.lock() {
-            guard.repos.insert(repo_key.to_string(), etag);
+            if guard.repos.get(repo_key) != Some(&etag) {
+                guard.repos.insert(repo_key.to_string(), etag);
+                changed = true;
+            }
         }
-        self.save()
+        if changed {
+            self.dirty.store(true, Ordering::SeqCst);
+            self.save()?;
+        }
+        Ok(())
     }
 
     pub fn cached_repo_names_if_fresh(&self) -> Option<Vec<String>> {
@@ -92,6 +107,7 @@ pub async fn evaluate_probe(
     org: &OrgConfig,
     store: &EtagStore,
     last_graphql_fetched_at: &str,
+    api_root: &str,
 ) -> Result<ProbeDecision, String> {
     if !config.use_etag_probe {
         return Ok(ProbeDecision {
@@ -101,7 +117,7 @@ pub async fn evaluate_probe(
         });
     }
 
-    let repos = repo_names_for_probe(client, token, org, store).await?;
+    let repos = repo_names_for_probe(client, token, org, store, api_root).await?;
     if repos.is_empty() {
         return Ok(ProbeDecision {
             skip_graphql: false,
@@ -117,7 +133,8 @@ pub async fn evaluate_probe(
         }
         let key = format!("{}/{}", org.name, repo);
         let url = format!(
-            "https://api.github.com/repos/{}/{}/issues?state=open&sort=updated&direction=desc&per_page=1",
+            "{}/repos/{}/{}/issues?state=open&sort=updated&direction=desc&per_page=1",
+            api_root.trim_end_matches('/'),
             org.name,
             repo
         );
@@ -178,6 +195,7 @@ async fn repo_names_for_probe(
     token: &str,
     org: &OrgConfig,
     store: &EtagStore,
+    api_root: &str,
 ) -> Result<Vec<String>, String> {
     if !org.include.is_empty() {
         return Ok(org.include.clone());
@@ -188,7 +206,8 @@ async fn repo_names_for_probe(
     }
 
     let url = format!(
-        "https://api.github.com/orgs/{}/repos?per_page=100&type=all",
+        "{}/orgs/{}/repos?per_page=100&type=all",
+        api_root.trim_end_matches('/'),
         org.name
     );
     let response = client
@@ -211,10 +230,15 @@ async fn repo_names_for_probe(
         .unwrap_or_default();
 
     if let Ok(mut guard) = store.inner.lock() {
+        let changed = guard.cached_repo_names != names
+            || guard.org_repo_list_fetched_at.is_none();
         guard.cached_repo_names = names.clone();
         guard.org_repo_list_fetched_at = Some(Utc::now().to_rfc3339());
+        if changed {
+            store.dirty.store(true, Ordering::SeqCst);
+            store.save()?;
+        }
     }
-    store.save()?;
     Ok(names)
 }
 
@@ -236,6 +260,49 @@ mod tests {
         };
         assert!(org_repo_allowed("ham-radio-ui", &org));
         assert!(!org_repo_allowed("ham-radio-docs", &org));
+    }
+
+    #[tokio::test]
+    async fn all_304_skips_graphql_via_httpmock() {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+        let org = OrgConfig {
+            name: "springfield-ham-radio".to_string(),
+            include: vec!["ham-radio-ui".to_string()],
+            exclude: vec![],
+        };
+        let _m = server.mock(|when, then| {
+            when.method(GET)
+                .path("/repos/springfield-ham-radio/ham-radio-ui/issues");
+            then.status(304);
+        });
+
+        let store = EtagStore::load(std::env::temp_dir().join("etag-test-store.json"));
+        store
+            .set_repo_etag("springfield-ham-radio/ham-radio-ui", "\"abc\"".to_string())
+            .expect("etag");
+
+        let config = AppConfig {
+            use_etag_probe: true,
+            ci_max_staleness_seconds: 300,
+            ..AppConfig::default()
+        };
+        let fetched = (Utc::now() - chrono::Duration::seconds(10)).to_rfc3339();
+        let client = reqwest::Client::new();
+        let decision = evaluate_probe(
+            &client,
+            "test-token",
+            &config,
+            &org,
+            &store,
+            &fetched,
+            &server.base_url(),
+        )
+        .await
+        .expect("probe");
+        assert!(decision.skip_graphql);
+        assert!(decision.mark_stale);
     }
 
     #[test]

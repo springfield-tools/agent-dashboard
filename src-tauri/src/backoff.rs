@@ -11,7 +11,7 @@ pub enum FailureKind {
 const TRANSIENT_STEPS: [u64; 4] = [30, 60, 120, 240];
 const TRANSIENT_CAP: u64 = 300;
 
-pub fn jitter_seconds(base: u64, nanos: u32) -> u64 {
+pub(crate) fn jitter_seconds(base: u64, nanos: u32) -> u64 {
     if base == 0 {
         return 0;
     }

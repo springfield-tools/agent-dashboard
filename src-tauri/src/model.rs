@@ -111,6 +111,11 @@ pub struct DashboardSnapshot {
     pub bots: Option<BotFooter>,
     pub tray_title: String,
     pub tray_tooltip: String,
+    /// Sum of `rateLimit.cost` across GraphQL calls in the last poll tick.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graphql_poll_cost: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graphql_remaining: Option<i32>,
 }
 
 fn group_title(id: &str) -> &'static str {
@@ -272,7 +277,13 @@ pub fn snapshot_is_stale(fetched_at: &str, interval_secs: u64) -> bool {
     }
 }
 
-pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str) -> DashboardSnapshot {
+pub fn build_dashboard(
+    items: Vec<RawItem>,
+    config: &AppConfig,
+    fetched_at: &str,
+    graphql_poll_cost: Option<i32>,
+    graphql_remaining: Option<i32>,
+) -> DashboardSnapshot {
     let labels = &config.labels;
     let bot_mode = config.filters.bots;
     let surface_failing = config.filters.surface_failing_bots;
@@ -370,6 +381,8 @@ pub fn build_dashboard(items: Vec<RawItem>, config: &AppConfig, fetched_at: &str
         bots,
         tray_title,
         tray_tooltip,
+        graphql_poll_cost,
+        graphql_remaining,
     }
 }
 
@@ -429,7 +442,7 @@ mod tests {
         let labels = LabelsConfig::default();
         let item = sample_item(vec!["needs-input", "agent-working"], Some("SUCCESS"));
         assert_eq!(assign_group(&item, &labels), "needs-input");
-        let snapshot = build_dashboard(vec![item], &AppConfig::default(), "now");
+        let snapshot = build_dashboard(vec![item], &AppConfig::default(), "now", None, None);
         assert_eq!(snapshot.groups[0].id, "needs-input");
         assert!(snapshot.groups[0].items[0].chips.iter().any(|c| c.label == "agent-working"));
     }
@@ -439,7 +452,7 @@ mod tests {
         let labels = LabelsConfig::default();
         let item = sample_item(vec!["needs-testing"], Some("FAILURE"));
         assert_eq!(assign_group(&item, &labels), "ci-failing");
-        let snapshot = build_dashboard(vec![item], &AppConfig::default(), "now");
+        let snapshot = build_dashboard(vec![item], &AppConfig::default(), "now", None, None);
         assert_eq!(snapshot.groups[0].id, "ci-failing");
         assert!(snapshot
             .groups[0]
@@ -513,7 +526,7 @@ mod tests {
             ci: None,
         });
 
-        let snapshot = build_dashboard(items, &config, "now");
+        let snapshot = build_dashboard(items, &config, "now", None, None);
         assert!(snapshot.bots.is_some());
         let bots = snapshot.bots.unwrap();
         assert_eq!(bots.green, 29);
@@ -529,7 +542,7 @@ mod tests {
 
     #[test]
     fn tray_title_empty_when_all_quiet() {
-        let snapshot = build_dashboard(vec![], &AppConfig::default(), "now");
+        let snapshot = build_dashboard(vec![], &AppConfig::default(), "now", None, None);
         assert!(snapshot.tray_title.is_empty());
         assert_eq!(snapshot.tray_tooltip, empty_tray_tooltip());
     }
@@ -572,7 +585,7 @@ mod tests {
             sample_item(vec!["ready-to-merge"], Some("SUCCESS")),
         ];
 
-        let snapshot = build_dashboard(items, &config, "now");
+        let snapshot = build_dashboard(items, &config, "now", None, None);
         assert_eq!(snapshot.tray_title, "1·1·1·1");
     }
 
@@ -596,7 +609,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now");
+        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
         assert!(snapshot.bots.is_none());
         assert!(snapshot.groups.is_empty());
     }
@@ -622,7 +635,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now");
+        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
         assert!(snapshot.groups.is_empty());
         let bots = snapshot.bots.expect("footer");
         assert_eq!(bots.failing, 1);
@@ -649,7 +662,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now");
+        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
         let bots = snapshot.bots.expect("footer");
         assert_eq!(bots.pending, 1);
         assert_eq!(bots.green, 0);
@@ -674,7 +687,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now");
+        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
         assert_eq!(snapshot.groups[0].id, "ci-failing");
     }
 
@@ -707,7 +720,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now");
+        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
         let bots = snapshot.bots.expect("footer");
         assert_eq!(bots.pending, 1);
     }
@@ -732,7 +745,7 @@ mod tests {
                 failed_checks: vec![],
             }),
         };
-        let snapshot = build_dashboard(vec![item], &config, "now");
+        let snapshot = build_dashboard(vec![item], &config, "now", None, None);
         assert!(snapshot.bots.is_none());
         assert_eq!(snapshot.groups[0].id, "not-started");
         assert_eq!(snapshot.groups[0].items.len(), 1);

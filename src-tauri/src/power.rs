@@ -1,13 +1,14 @@
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use tauri::AppHandle;
 
 use crate::pause::is_polling_paused;
-use crate::poll::{run_poll_cycle, PollRuntime};
+use crate::poll::PollRuntime;
 use crate::state::AppState;
 
-/// One immediate refresh after wake when user pause is not active (PLAN § Sleep and offline).
-pub fn handle_system_wake<R: tauri::Runtime>(app: &AppHandle<R>, state: &Arc<AppState>) {
+/// Queue one post-wake refresh on the poll loop (user pause only suppresses wake).
+pub fn handle_system_wake<R: tauri::Runtime>(state: &Arc<AppState>) {
     let user_paused = state
         .config
         .lock()
@@ -17,21 +18,17 @@ pub fn handle_system_wake<R: tauri::Runtime>(app: &AppHandle<R>, state: &Arc<App
         log::info!("wake: skipped refresh (user pause still active)");
         return;
     }
+    if state.poll_runtime.rate_limit_is_active() {
+        log::info!("wake: skipped refresh (rate limit wait active)");
+        return;
+    }
+    state.poll_runtime.pending_wake.store(true, Ordering::SeqCst);
     state.poll_runtime.wake.notify_one();
-    let app = app.clone();
-    let state = state.clone();
-    tauri::async_runtime::spawn(async move {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .expect("http client");
-        let _ = run_poll_cycle(&app, &state, &client, false).await;
-    });
 }
 
 #[cfg(target_os = "macos")]
 pub fn install_wake_listener<R: tauri::Runtime>(
-    app: AppHandle<R>,
+    _app: AppHandle<R>,
     state: Arc<AppState>,
     _runtime: Arc<PollRuntime>,
 ) {
@@ -39,11 +36,10 @@ pub fn install_wake_listener<R: tauri::Runtime>(
     use objc2_app_kit::{NSWorkspace, NSWorkspaceDidWakeNotification};
     use objc2_foundation::{NSNotification, NSOperationQueue};
 
-    let app = app.clone();
     let state = state.clone();
     let block = RcBlock::new(move |_notification: std::ptr::NonNull<NSNotification>| {
         log::info!("wake: NSWorkspaceDidWakeNotification");
-        handle_system_wake(&app, &state);
+        handle_system_wake(&state);
     });
 
     let workspace = NSWorkspace::sharedWorkspace();
