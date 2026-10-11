@@ -503,11 +503,16 @@ mod tests {
                 .path(format!("{issue_path}/labels/needs-testing"));
             then.status(200);
         });
+        remove_label_at(&client, &base, token, owner, repo, number, "needs-testing")
+            .await
+            .expect("write remove needs-testing");
+        write_remove_needs_testing.assert();
+
         let write_add_ready = server.mock(|when, then| {
             when.method(POST).path(format!("{issue_path}/labels"));
             then.status(200);
         });
-        apply_label_diff_at(
+        add_labels_at(
             &client,
             &base,
             token,
@@ -515,11 +520,9 @@ mod tests {
             repo,
             number,
             &write_add,
-            &write_remove,
         )
         .await
-        .expect("write labels");
-        write_remove_needs_testing.assert();
+        .expect("write add ready-to-merge");
         write_add_ready.assert();
 
         let undo = make_undo_record(
