@@ -15,7 +15,7 @@ Runtime config is written on first launch to `~/Library/Application Support/com.
 1. GitHub → **Settings** → **Developer settings** → **Fine-grained tokens** → **Generate new token**.
 2. **Resource owner:** `springfield-ham-radio`. If the org does not appear, an owner must allow fine-grained PATs. If the org requires approval, submit a justification; the token can read public repos until approved.
 3. **Repository access:** All repositories.
-4. **Permissions:** **Metadata** Read (automatic), **Issues** Read, **Pull requests** Read, **Commit statuses** Read. There is no **Checks** permission on fine-grained tokens. Leave **Contents** off unless CI rollups come back empty.
+4. **Permissions:** **Metadata** Read (automatic), **Issues** Read, **Pull requests** Read, **Commit statuses** Read. There is no **Checks** permission on fine-grained tokens. For **private** repositories, also grant **Contents** Read if commit `statusCheckRollup` data is denied (the app shows a per-org banner and gray **CI ?** chips instead of raw errors).
 5. **Expiration:** 90 days (or your org’s shorter maximum).
 6. In the app, open **Settings** and paste the token once (stored in Keychain only).
 

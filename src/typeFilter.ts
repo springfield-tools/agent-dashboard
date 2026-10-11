@@ -75,7 +75,10 @@ export function filterDashboardView(
 
   const orgSections = (snapshot.orgSections ?? [])
     .map((section) => filterOrgSection(section, filter))
-    .filter((section) => section.groups.length > 0 || section.authBanner);
+    .filter(
+      (section) =>
+        section.groups.length > 0 || section.authBanner || section.sectionNotice,
+    );
 
   const groups = filterGroups(snapshot.groups, filter);
 

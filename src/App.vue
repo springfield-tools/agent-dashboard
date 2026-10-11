@@ -93,6 +93,19 @@
           <p v-if="orgSection.authBanner" class="banner banner-warn org-auth-banner">
             {{ orgSection.authBanner }}
           </p>
+          <details
+            v-if="orgSection.sectionNotice"
+            class="banner banner-warn org-section-notice"
+          >
+            <summary class="org-section-notice-summary">
+              {{ orgSection.sectionNotice.summary }}
+            </summary>
+            <ul v-if="orgSection.sectionNotice.details.length" class="org-section-notice-details">
+              <li v-for="(line, idx) in orgSection.sectionNotice.details" :key="idx">
+                {{ line }}
+              </li>
+            </ul>
+          </details>
           <section
             v-for="group in orgSection.groups"
             :key="`${orgSection.org}-${group.id}`"
@@ -380,7 +393,8 @@
         <p class="settings-hint">
           Each org can use <code>credential = "keychain"</code> (per-org Keychain item) or
           <code>credential = "gh"</code> on that <code>[[orgs]]</code> row. Fine-grained PATs need
-          Metadata and Commit statuses (Read); row actions need Issues and Pull requests
+          Metadata and Commit statuses (Read); private repos may also need Contents (Read) for CI
+          rollups. Row actions need Issues and Pull requests
           <strong>Read and write</strong>. Tokens stay in Keychain only — never in config or
           snapshot.
         </p>

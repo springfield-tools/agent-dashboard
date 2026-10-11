@@ -1,0 +1,84 @@
+{
+  "data": {
+    "rateLimit": { "cost": 6, "remaining": 4994, "resetAt": "2026-10-10T13:00:00Z" },
+    "organization": {
+      "repositories": {
+        "totalCount": 1,
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": [
+          {
+            "name": "agent-dashboard",
+            "isArchived": false,
+            "pullRequests": {
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
+              "nodes": [
+                {
+                  "number": 10,
+                  "title": "rollup ok",
+                  "url": "https://github.com/springfield-tools/agent-dashboard/pull/10",
+                  "updatedAt": "2026-10-10T12:00:00Z",
+                  "isDraft": false,
+                  "author": { "login": "human" },
+                  "labels": { "nodes": [] },
+                  "commits": {
+                    "nodes": [
+                      {
+                        "commit": {
+                          "statusCheckRollup": {
+                            "state": "SUCCESS"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "number": 11,
+                  "title": "rollup denied",
+                  "url": "https://github.com/springfield-tools/agent-dashboard/pull/11",
+                  "updatedAt": "2026-10-10T12:00:00Z",
+                  "isDraft": false,
+                  "author": { "login": "human" },
+                  "labels": { "nodes": [] },
+                  "commits": {
+                    "nodes": [
+                      {
+                        "commit": {
+                          "statusCheckRollup": null
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "issues": {
+              "pageInfo": { "hasNextPage": false, "endCursor": null },
+              "nodes": []
+            }
+          }
+        ]
+      }
+    }
+  },
+  "errors": [
+    {
+      "type": "FORBIDDEN",
+      "path": [
+        "organization",
+        "repositories",
+        "nodes",
+        0,
+        "pullRequests",
+        "nodes",
+        1,
+        "commits",
+        "nodes",
+        0,
+        "commit",
+        "statusCheckRollup"
+      ],
+      "message": "Resource not accessible by personal access token"
+    }
+  ]
+}

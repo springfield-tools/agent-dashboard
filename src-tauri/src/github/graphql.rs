@@ -5,7 +5,13 @@ use std::collections::HashMap;
 
 use crate::config::{AppConfig, OrgConfig};
 use crate::credential::graphql_budget_key;
-use crate::model::{CiSnapshot, GraphqlBudgetLine, ItemKind, RawItem};
+use crate::model::{CiSnapshot, GraphqlBudgetLine, ItemKind, OrgSectionNotice, RawItem};
+
+mod graphql_partial;
+use graphql_partial::{
+    build_org_notice, merge_parsed_errors, only_rollup_access_errors, parse_graphql_errors,
+    rollup_forbidden_at, ParsedGraphqlErrors,
+};
 
 /// Legacy search query (OAuth / classic tokens). Fine-grained PATs often cannot search orgs.
 pub fn legacy_search_query_string(org: &OrgConfig) -> String {
@@ -182,6 +188,7 @@ pub struct FetchResult {
     /// Shown when the fetch succeeded but returned no items for a suspicious reason.
     pub empty_hint: Option<String>,
     pub repos_visible: u32,
+    pub section_notice: Option<OrgSectionNotice>,
 }
 
 pub(crate) struct SearchPage {
@@ -209,12 +216,20 @@ pub(crate) struct OrgRepoPage {
     pub items: Vec<RawItem>,
     pub rate_limit: Option<RateLimitInfo>,
     pub warning: Option<String>,
+    pub parsed_errors: ParsedGraphqlErrors,
     pub repos_in_page: u32,
     pub total_repo_count: Option<u32>,
     pub has_next: bool,
     pub end_cursor: Option<String>,
     pub organization_missing: bool,
     pub pending: Vec<PendingRepoPagination>,
+}
+
+fn graphql_partial_warning(errors: &serde_json::Value) -> Option<String> {
+    if only_rollup_access_errors(errors) {
+        return None;
+    }
+    Some("GitHub returned partial GraphQL errors.".to_string())
 }
 
 fn header_u64(headers: &HeaderMap, name: &str) -> Option<u64> {
@@ -337,7 +352,9 @@ pub(crate) fn ingest_search_response(
 
     let rate_limit = json.pointer("/data/rateLimit").map(parse_rate_limit);
 
-    let warning = json.get("errors").map(|errors| errors.to_string());
+    let warning = json
+        .get("errors")
+        .and_then(|errors| graphql_partial_warning(errors));
 
     let search = json
         .pointer("/data/search")
@@ -353,7 +370,7 @@ pub(crate) fn ingest_search_response(
         .unwrap_or_default();
 
     for node in nodes {
-        if let Some(item) = parse_node(&node) {
+        if let Some(item) = parse_node(&node, false) {
             if item_matches_org_filter(&item, org) {
                 items.push(item);
             }
@@ -395,7 +412,13 @@ pub(crate) fn ingest_org_repositories_response(
     }
 
     let rate_limit = json.pointer("/data/rateLimit").map(parse_rate_limit);
-    let warning = json.get("errors").map(|errors| errors.to_string());
+    let parsed_errors = json
+        .get("errors")
+        .map(parse_graphql_errors)
+        .unwrap_or_default();
+    let warning = json
+        .get("errors")
+        .and_then(|errors| graphql_partial_warning(errors));
 
     let organization_missing = match json.pointer("/data/organization") {
         None => true,
@@ -406,6 +429,7 @@ pub(crate) fn ingest_org_repositories_response(
             items: vec![],
             rate_limit,
             warning,
+            parsed_errors,
             repos_in_page: 0,
             total_repo_count: None,
             has_next: false,
@@ -435,7 +459,7 @@ pub(crate) fn ingest_org_repositories_response(
         .cloned()
         .unwrap_or_default();
 
-    for repo_node in nodes {
+    for (repo_index, repo_node) in nodes.iter().enumerate() {
         let repo_name = repo_node
             .get("name")
             .and_then(|v| v.as_str())
@@ -456,8 +480,12 @@ pub(crate) fn ingest_org_repositories_response(
             .and_then(|c| c.pointer("/nodes"))
             .and_then(|n| n.as_array())
         {
-            for pr in pr_nodes {
-                if let Some(item) = parse_pr_in_repo(pr, &org.name, repo_name) {
+            for (pr_index, pr) in pr_nodes.iter().enumerate() {
+                let rollup_forbidden =
+                    rollup_forbidden_at(&parsed_errors, repo_index, pr_index);
+                if let Some(item) =
+                    parse_pr_in_repo(pr, &org.name, repo_name, rollup_forbidden)
+                {
                     items.push(item);
                 }
             }
@@ -520,6 +548,7 @@ pub(crate) fn ingest_org_repositories_response(
         items,
         rate_limit,
         warning,
+        parsed_errors,
         repos_in_page,
         total_repo_count,
         has_next,
@@ -619,7 +648,15 @@ async fn fetch_repo_item_page(
     token: &str,
     org: &OrgConfig,
     pending: &PendingRepoPagination,
-) -> Result<(Vec<RawItem>, Option<RateLimitInfo>, Vec<PendingRepoPagination>), GraphqlError> {
+) -> Result<
+    (
+        Vec<RawItem>,
+        Option<RateLimitInfo>,
+        Vec<PendingRepoPagination>,
+        ParsedGraphqlErrors,
+    ),
+    GraphqlError,
+> {
     let (query, variables) = match pending.kind {
         RepoItemPageKind::PullRequests => (
             REPO_PR_PAGE_QUERY,
@@ -640,7 +677,13 @@ async fn fetch_repo_item_page(
     };
     let json = post_graphql(client, token, query, variables).await?;
     let rate_limit = json.pointer("/data/rateLimit").map(parse_rate_limit);
-    let warning = json.get("errors").map(|e| e.to_string());
+    let parsed_errors = json
+        .get("errors")
+        .map(parse_graphql_errors)
+        .unwrap_or_default();
+    let warning = json
+        .get("errors")
+        .and_then(|errors| graphql_partial_warning(errors));
     let mut items = Vec::new();
     let mut more = Vec::new();
     let conn_path = match pending.kind {
@@ -651,9 +694,13 @@ async fn fetch_repo_item_page(
         GraphqlError::GraphQl(format!("missing repository connection for {}", pending.repo))
     })?;
     if let Some(nodes) = conn.pointer("/nodes").and_then(|n| n.as_array()) {
-        for node in nodes {
+        for (pr_index, node) in nodes.iter().enumerate() {
             let item = match pending.kind {
-                RepoItemPageKind::PullRequests => parse_pr_in_repo(node, &org.name, &pending.repo),
+                RepoItemPageKind::PullRequests => {
+                    let rollup_forbidden =
+                        rollup_forbidden_at(&parsed_errors, 0, pr_index);
+                    parse_pr_in_repo(node, &org.name, &pending.repo, rollup_forbidden)
+                }
                 RepoItemPageKind::Issues => parse_issue_in_repo(node, &org.name, &pending.repo),
             };
             if let Some(item) = item {
@@ -677,10 +724,14 @@ async fn fetch_repo_item_page(
             });
         }
     }
-    if warning.is_some() {
-        log::debug!("github graphql repo page warning: {:?}", warning);
+    if warning.is_some() || !parsed_errors.rollup_forbidden_paths.is_empty() {
+        log::debug!(
+            "github graphql repo page warning={:?} rollup_forbidden={}",
+            warning,
+            parsed_errors.rollup_forbidden_paths.len()
+        );
     }
-    Ok((items, rate_limit, more))
+    Ok((items, rate_limit, more, parsed_errors))
 }
 
 fn pr_needs_failure_contexts(item: &RawItem) -> bool {
@@ -754,6 +805,7 @@ pub async fn fetch_org_open_items(
     let mut total_repos: Option<u32> = None;
     let mut organization_missing = false;
     let mut pending_pages: Vec<PendingRepoPagination> = Vec::new();
+    let mut parsed_errors = ParsedGraphqlErrors::default();
 
     loop {
         let variables = serde_json::json!({
@@ -780,6 +832,7 @@ pub async fn fetch_org_open_items(
             total_repos = page.total_repo_count;
         }
         accumulate_rate_limit(&mut total_rate, page.rate_limit);
+        merge_parsed_errors(&mut parsed_errors, page.parsed_errors);
         if page.warning.is_some() {
             warning = page.warning;
         }
@@ -794,10 +847,12 @@ pub async fn fetch_org_open_items(
     }
 
     while let Some(pending) = pending_pages.pop() {
-        let (items, rate, more) = fetch_repo_item_page(client, token, org, &pending).await?;
+        let (items, rate, more, page_errors) =
+            fetch_repo_item_page(client, token, org, &pending).await?;
         all_items.extend(items);
         pending_pages.extend(more);
         accumulate_rate_limit(&mut total_rate, rate);
+        merge_parsed_errors(&mut parsed_errors, page_errors);
     }
 
     enrich_failure_contexts(client, token, &org.name, &mut all_items, &mut total_rate).await?;
@@ -853,12 +908,15 @@ pub async fn fetch_org_open_items(
         log::debug!("github graphql warning (no token): {}", w);
     }
 
+    let section_notice = build_org_notice(&org.name, &parsed_errors);
+
     Ok(FetchResult {
         items: all_items,
         rate_limit: last_rate,
         warning,
         empty_hint,
         repos_visible,
+        section_notice,
     })
 }
 
@@ -868,6 +926,7 @@ pub struct MultiOrgFetchResult {
     pub budgets: Vec<GraphqlBudgetLine>,
     pub org_errors: HashMap<String, String>,
     pub org_graphql_errors: HashMap<String, GraphqlError>,
+    pub org_section_notices: HashMap<String, OrgSectionNotice>,
     pub warning: Option<String>,
     pub empty_hint: Option<String>,
     pub repos_visible: u32,
@@ -903,6 +962,7 @@ pub async fn fetch_all_orgs_multi(
     let mut budget_map: HashMap<String, GraphqlBudgetLine> = HashMap::new();
     let mut org_errors = HashMap::new();
     let mut org_graphql_errors = HashMap::new();
+    let mut org_section_notices = HashMap::new();
     let mut warning = None;
     let mut empty_hint = None;
     let mut repos_visible = 0u32;
@@ -927,6 +987,9 @@ pub async fn fetch_all_orgs_multi(
                 }
                 if result.empty_hint.is_some() && combined.is_empty() {
                     empty_hint = result.empty_hint;
+                }
+                if let Some(notice) = result.section_notice {
+                    org_section_notices.insert(org.name.clone(), notice);
                 }
             }
             Err(e) => {
@@ -958,6 +1021,7 @@ pub async fn fetch_all_orgs_multi(
         budgets,
         org_errors,
         org_graphql_errors,
+        org_section_notices,
         warning,
         empty_hint,
         repos_visible,
@@ -999,6 +1063,7 @@ pub async fn fetch_all_orgs(
         warning: multi.warning,
         empty_hint: multi.empty_hint,
         repos_visible: multi.repos_visible,
+        section_notice: None,
     })
 }
 
@@ -1006,7 +1071,12 @@ fn item_matches_org_filter(item: &RawItem, org: &OrgConfig) -> bool {
     repo_include_exclude(&item.repo, org)
 }
 
-fn parse_pr_in_repo(node: &serde_json::Value, org: &str, repo: &str) -> Option<RawItem> {
+fn parse_pr_in_repo(
+    node: &serde_json::Value,
+    org: &str,
+    repo: &str,
+    rollup_forbidden: bool,
+) -> Option<RawItem> {
     let mut wrapped = node.clone();
     if let Some(obj) = wrapped.as_object_mut() {
         obj.insert(
@@ -1021,7 +1091,7 @@ fn parse_pr_in_repo(node: &serde_json::Value, org: &str, repo: &str) -> Option<R
             }),
         );
     }
-    parse_node(&wrapped)
+    parse_node(&wrapped, rollup_forbidden)
 }
 
 fn parse_issue_in_repo(node: &serde_json::Value, org: &str, repo: &str) -> Option<RawItem> {
@@ -1039,10 +1109,10 @@ fn parse_issue_in_repo(node: &serde_json::Value, org: &str, repo: &str) -> Optio
             }),
         );
     }
-    parse_node(&wrapped)
+    parse_node(&wrapped, false)
 }
 
-fn parse_node(node: &serde_json::Value) -> Option<RawItem> {
+fn parse_node(node: &serde_json::Value, rollup_forbidden: bool) -> Option<RawItem> {
     let typename = node.get("__typename").and_then(|v| v.as_str())?;
     let repo = node
         .pointer("/repository/name")
@@ -1076,9 +1146,38 @@ fn parse_node(node: &serde_json::Value) -> Option<RawItem> {
         "Issue" => (ItemKind::Issue, false, None),
         "PullRequest" => {
             let is_draft = node.get("isDraft").and_then(|v| v.as_bool()).unwrap_or(false);
-            let rollup = node.pointer("/commits/nodes/0/commit/statusCheckRollup");
-            let ci = rollup.map(parse_rollup).unwrap_or(None);
-            (ItemKind::Pr, is_draft, ci)
+            let (ci, ci_unknown) = if rollup_forbidden {
+                (None, true)
+            } else {
+                let rollup = node.pointer("/commits/nodes/0/commit/statusCheckRollup");
+                (rollup.and_then(|r| parse_rollup(r)), false)
+            };
+            return Some(RawItem {
+                kind: ItemKind::Pr,
+                org,
+                repo: repo.to_string(),
+                number: node.get("number").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                title: node
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                url: node
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                author,
+                updated_at: node
+                    .get("updatedAt")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                is_draft,
+                labels,
+                ci,
+                ci_unknown,
+            });
         }
         _ => return None,
     };
@@ -1107,6 +1206,7 @@ fn parse_node(node: &serde_json::Value) -> Option<RawItem> {
         is_draft,
         labels,
         ci,
+        ci_unknown: false,
     })
 }
 
@@ -1216,6 +1316,38 @@ mod tests {
     }
 
     #[test]
+    fn org_partial_rollup_errors_keep_data_and_mark_ci_unknown() {
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../fixtures/graphql/org_repositories_partial_rollup_errors.json"
+        ))
+        .expect("json");
+        let org = OrgConfig {
+            name: "springfield-tools".to_string(),
+            credential: None,
+            include: vec![],
+            exclude: vec![],
+        };
+        let page = ingest_org_repositories_response(&json, &org).expect("org page");
+        assert_eq!(page.items.len(), 2);
+        assert!(page.warning.is_none());
+        let denied = page
+            .items
+            .iter()
+            .find(|i| i.number == 11)
+            .expect("pr 11");
+        assert!(denied.ci_unknown);
+        assert!(denied.ci.is_none());
+        let ok = page.items.iter().find(|i| i.number == 10).expect("pr 10");
+        assert!(!ok.ci_unknown);
+        assert_eq!(ok.ci.as_ref().and_then(|c| c.state.as_deref()), Some("SUCCESS"));
+        let notice =
+            graphql_partial::build_org_notice(&org.name, &page.parsed_errors).expect("notice");
+        assert!(notice.summary.contains("springfield-tools"));
+        assert!(notice.summary.contains("1 PR"));
+        assert_eq!(notice.details.len(), 1);
+    }
+
+    #[test]
     fn org_fixture_yields_pr_and_issue() {
         let json: serde_json::Value = serde_json::from_str(include_str!(
             "../../fixtures/graphql/org_repositories_sample.json"
@@ -1264,7 +1396,7 @@ mod tests {
             "repository": { "name": "r", "nameWithOwner": "springfield-ham-radio/r" },
             "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "SUCCESS", "contexts": { "nodes": [] } } } }] }
         });
-        let item = parse_node(&node).expect("item");
+        let item = parse_node(&node, false).expect("item");
         assert_eq!(item.kind, ItemKind::Pr);
         assert!(item.is_draft);
     }
@@ -1283,7 +1415,7 @@ mod tests {
             "repository": { "name": "r", "nameWithOwner": "springfield-ham-radio/r" },
             "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE", "contexts": { "nodes": [] } } } }] }
         });
-        let item = parse_node(&node).expect("item");
+        let item = parse_node(&node, false).expect("item");
         let ci = item.ci.expect("ci");
         assert_eq!(ci.state.as_deref(), Some("FAILURE"));
         assert!(ci.failed_checks.is_empty());

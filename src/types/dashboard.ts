@@ -31,10 +31,16 @@ export type DashboardGroup = {
   items: DashboardRow[];
 };
 
+export type OrgSectionNotice = {
+  summary: string;
+  details: string[];
+};
+
 export type DashboardOrgSection = {
   org: string;
   trayTitle: string;
   authBanner?: string | null;
+  sectionNotice?: OrgSectionNotice | null;
   groups: DashboardGroup[];
 };
 

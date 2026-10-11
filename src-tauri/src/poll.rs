@@ -526,7 +526,11 @@ pub async fn run_poll_cycle<R: Runtime>(
                 ));
             }
         } else if let Some(w) = fetch.warning {
-            state.set_banner(Some(w));
+            if fetch.items.is_empty() {
+                state.set_banner(Some(w));
+            } else {
+                state.set_banner(None);
+            }
         } else {
             state.set_banner(None);
         }
@@ -565,6 +569,7 @@ pub async fn run_poll_cycle<R: Runtime>(
             poll_remaining,
             fetch.budgets,
             fetch.org_errors,
+            fetch.org_section_notices,
         );
         state.set_dashboard(snapshot.clone());
         if let Ok(mut write) = state.write_state.lock() {

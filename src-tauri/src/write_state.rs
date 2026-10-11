@@ -177,6 +177,7 @@ fn raw_from_row(row: &DashboardRow) -> RawItem {
         is_draft: row.draft,
         labels: row.labels.clone(),
         ci: row.ci.clone(),
+        ci_unknown: false,
     }
 }
 
@@ -189,6 +190,9 @@ fn preserve_poll_meta(mut built: DashboardSnapshot, from: &DashboardSnapshot) ->
         if let Some(prev) = from.org_sections.iter().find(|s| s.org == section.org) {
             if section.auth_banner.is_none() {
                 section.auth_banner = prev.auth_banner.clone();
+            }
+            if section.section_notice.is_none() {
+                section.section_notice = prev.section_notice.clone();
             }
         }
     }

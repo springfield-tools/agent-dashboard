@@ -37,6 +37,13 @@ pub struct CiSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct OrgSectionNotice {
+    pub summary: String,
+    pub details: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RawItem {
     pub kind: ItemKind,
     pub org: String,
@@ -51,6 +58,9 @@ pub struct RawItem {
     #[serde(default)]
     pub labels: Vec<String>,
     pub ci: Option<CiSnapshot>,
+    /// CI rollup was omitted because the token cannot read commit/status data.
+    #[serde(default)]
+    pub ci_unknown: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +115,8 @@ pub struct DashboardOrgSection {
     pub tray_title: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub auth_banner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section_notice: Option<OrgSectionNotice>,
     pub groups: Vec<DashboardGroup>,
 }
 
@@ -241,7 +253,12 @@ pub fn row_chips(item: &RawItem, group_id: &str, labels: &LabelsConfig) -> Vec<R
         }
     }
 
-    if let Some(ci) = &item.ci {
+    if item.ci_unknown && item.kind == ItemKind::Pr {
+        chips.push(RowChip {
+            label: "CI ?".to_string(),
+            variant: "ci-unknown".to_string(),
+        });
+    } else if let Some(ci) = &item.ci {
         if group_id == "ci-failing" {
             let names = &ci.failed_checks;
             const MAX: usize = 3;
@@ -425,6 +442,7 @@ pub fn build_dashboard_simple(
         graphql_remaining,
         vec![],
         HashMap::new(),
+        HashMap::new(),
     )
 }
 
@@ -436,6 +454,7 @@ pub fn build_dashboard(
     graphql_remaining: Option<i32>,
     graphql_budgets: Vec<GraphqlBudgetLine>,
     org_auth_banners: HashMap<String, String>,
+    org_section_notices: HashMap<String, OrgSectionNotice>,
 ) -> DashboardSnapshot {
     let labels = &config.labels;
     let bot_mode = config.filters.bots;
@@ -475,6 +494,7 @@ pub fn build_dashboard(
             org: org_cfg.name.clone(),
             tray_title: org_tray,
             auth_banner: org_auth_banners.get(&org_cfg.name).cloned(),
+            section_notice: org_section_notices.get(&org_cfg.name).cloned(),
             groups: groups_from_buckets(&org_buckets),
         });
     }
@@ -570,6 +590,7 @@ mod tests {
                 state: ci_state.map(String::from),
                 failed_checks: vec![],
             }),
+            ci_unknown: false,
         }
     }
 
@@ -618,6 +639,7 @@ mod tests {
                     state: Some("SUCCESS".to_string()),
                     failed_checks: vec![],
                 }),
+                ci_unknown: false,
             });
         }
         for n in 30..=31 {
@@ -633,6 +655,7 @@ mod tests {
                 is_draft: false,
                 labels: vec![],
                 ci: None,
+                ci_unknown: false,
             });
         }
         items.push(RawItem {
@@ -647,6 +670,7 @@ mod tests {
             is_draft: true,
             labels: vec![],
             ci: None,
+            ci_unknown: false,
         });
         items.push(RawItem {
             kind: ItemKind::Pr,
@@ -660,6 +684,7 @@ mod tests {
             is_draft: true,
             labels: vec![],
             ci: None,
+            ci_unknown: false,
         });
 
         let snapshot = build_dashboard_simple(items, &config, "now", None, None);
@@ -674,6 +699,26 @@ mod tests {
             .expect("not started");
         assert_eq!(not_started.items.len(), 2);
         assert!(not_started.items.iter().all(|r| r.draft));
+    }
+
+    #[test]
+    fn ci_unknown_chip_on_pr() {
+        let item = RawItem {
+            kind: ItemKind::Pr,
+            org: "springfield-tools".to_string(),
+            repo: "agent-dashboard".to_string(),
+            number: 1,
+            title: "x".to_string(),
+            url: "https://example.com".to_string(),
+            author: "human".to_string(),
+            updated_at: "2026-10-10T12:00:00Z".to_string(),
+            is_draft: false,
+            labels: vec![],
+            ci: None,
+            ci_unknown: true,
+        };
+        let chips = row_chips(&item, "not-started", &AppConfig::default().labels);
+        assert!(chips.iter().any(|c| c.label == "CI ?" && c.variant == "ci-unknown"));
     }
 
     #[test]
@@ -717,6 +762,7 @@ mod tests {
                     state: Some("FAILURE".to_string()),
                     failed_checks: vec![],
                 }),
+                ci_unknown: false,
             },
             sample_item(vec!["ready-to-merge"], Some("SUCCESS")),
         ];
@@ -744,6 +790,7 @@ mod tests {
                 state: Some("SUCCESS".to_string()),
                 failed_checks: vec![],
             }),
+            ci_unknown: false,
         };
         let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         assert!(snapshot.bots.is_none());
@@ -770,6 +817,7 @@ mod tests {
                 state: Some("FAILURE".to_string()),
                 failed_checks: vec![],
             }),
+            ci_unknown: false,
         };
         let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         assert!(snapshot.groups.is_empty());
@@ -797,6 +845,7 @@ mod tests {
                 state: Some("PENDING".to_string()),
                 failed_checks: vec![],
             }),
+            ci_unknown: false,
         };
         let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         let bots = snapshot.bots.expect("footer");
@@ -822,6 +871,7 @@ mod tests {
                 state: Some("FAILURE".to_string()),
                 failed_checks: vec!["build".to_string(), "lint".to_string()],
             }),
+            ci_unknown: false,
         };
         let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         let row = &snapshot.groups[0].items[0];
@@ -846,6 +896,7 @@ mod tests {
                 state: Some("FAILURE".to_string()),
                 failed_checks: vec![],
             }),
+            ci_unknown: false,
         };
         let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         assert_eq!(snapshot.groups[0].id, "ci-failing");
@@ -879,6 +930,7 @@ mod tests {
                 state: Some("EXPECTED".to_string()),
                 failed_checks: vec![],
             }),
+            ci_unknown: false,
         };
         let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         let bots = snapshot.bots.expect("footer");
@@ -904,6 +956,7 @@ mod tests {
                 state: Some("SUCCESS".to_string()),
                 failed_checks: vec![],
             }),
+            ci_unknown: false,
         };
         let snapshot = build_dashboard_simple(vec![item], &config, "now", None, None);
         assert!(snapshot.bots.is_none());

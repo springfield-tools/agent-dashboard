@@ -371,6 +371,26 @@ body {
   margin: 4px 0 8px;
 }
 
+.org-section-notice {
+  margin: 4px 0 8px;
+}
+
+.org-section-notice-summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.org-section-notice-summary::-webkit-details-marker {
+  display: none;
+}
+
+.org-section-notice-details {
+  margin: 6px 0 0;
+  padding-left: 1.1rem;
+  font-size: 12px;
+  opacity: 0.9;
+}
+
 .org-empty {
   margin: 0 0 8px 12px;
 }
@@ -490,6 +510,11 @@ body {
   color: #a11b12;
 }
 
+.chip-ci-unknown {
+  background: rgb(142 142 147 / 22%);
+  color: #636366;
+}
+
 .chip-ci-running {
   background: rgb(0 122 255 / 18%);
   color: #004999;
@@ -544,6 +569,11 @@ body {
   .chip-ci-failing {
     background: rgb(255 69 58 / 26%);
     color: #ffc8c4;
+  }
+
+  .chip-ci-unknown {
+    background: rgb(142 142 147 / 28%);
+    color: #c7c7cc;
   }
 
   .chip-ci-running {

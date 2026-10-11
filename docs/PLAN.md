@@ -379,7 +379,7 @@ Token settings to document in the README:
 - Resource owner: `springfield-ham-radio` (add `springfield-tools` when that org is in the config)
 - Repository access: all repositories, so a new repo appears without a new token
 - Phases 1–4: Metadata Read (automatic), Issues Read, Pull requests Read, Commit statuses Read. Fine-grained PATs have no **Checks** permission; `statusCheckRollup.state` still works on public repos, but `CheckRun` names in rollup contexts may be empty until GitHub closes that gap (or use `credential = "gh"`).
-- Phase 5: the same list, with Issues and Pull requests raised to Read and write. Commit statuses stays Read. Contents stays off unless rollups come back empty on a private repo
+- Phase 5: the same list, with Issues and Pull requests raised to Read and write. Commit statuses stays Read. For **private** repos, add **Contents** Read when GraphQL returns `Resource not accessible by personal access token` on `statusCheckRollup` (partial errors); the popover shows a one-line org banner instead of raw JSON
 - If a future private repo returns an empty rollup, add Contents Read then
 - Expiration: 90 days is a reasonable first choice
 
@@ -722,7 +722,7 @@ Settings lists only orgs present in that file. It does not add orgs. After the e
 
 Confirm tinted chips and darker cards in light and dark mode. Expand/collapse an org, quit, relaunch, and confirm the state.
 
-Create a fine-grained PAT for **springfield-tools** (resource owner springfield-tools): Issues and Pull requests **Read and write**, Metadata **Read**, Commit statuses **Read**. Save under **springfield-tools** in Settings. Repeat for **springfield-usa**, or set `credential = "gh"` on that `[[orgs]]` entry if `gh auth login` already covers it.
+Create a fine-grained PAT for **springfield-tools** (resource owner springfield-tools): Issues and Pull requests **Read and write**, Metadata **Read**, Commit statuses **Read**, and **Contents** Read if any springfield-tools repo is private and CI rollups are denied. Save under **springfield-tools** in Settings. Repeat for **springfield-usa**, or set `credential = "gh"` on that `[[orgs]]` entry if `gh auth login` already covers it.
 
 Scratch write test on `springfield-ham-radio` as in Phase 5. Open a row in `springfield-tools` only after that org's token is ready.
 
