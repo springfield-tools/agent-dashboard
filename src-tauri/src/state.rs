@@ -102,11 +102,4 @@ impl AppState {
         }
     }
 
-    pub fn reload_from_fixture(&self) {
-        let config = self.config.lock().map(|c| c.clone()).unwrap_or_default();
-        let items = load_checked_in_items();
-        let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-        let snapshot = build_dashboard_simple(items, &config, &fetched_at, None, None);
-        self.set_dashboard(snapshot);
-    }
 }

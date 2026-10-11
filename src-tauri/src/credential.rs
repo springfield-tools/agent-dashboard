@@ -145,18 +145,6 @@ pub fn clear_gh_session_cache(cache: &Mutex<Option<String>>) {
     }
 }
 
-pub fn obtain_github_token(
-    config: &AppConfig,
-    gh_cache: &Mutex<Option<String>>,
-    invalidate_gh_cache: bool,
-) -> Result<String, Option<String>> {
-    let org = config
-        .orgs
-        .first()
-        .ok_or(Some("No orgs configured.".to_string()))?;
-    obtain_github_token_for_org(config, org, gh_cache, invalidate_gh_cache)
-}
-
 pub fn obtain_github_token_for_org(
     config: &AppConfig,
     org: &OrgConfig,

@@ -12,8 +12,6 @@ pub fn load_checked_in_items() -> Vec<RawItem> {
 mod tests {
     use super::*;
     use crate::config::AppConfig;
-    use crate::model::build_dashboard;
-
     #[test]
     fn fixture_matches_phase2_acceptance_counts() {
         let items = load_checked_in_items();

@@ -15,11 +15,6 @@ use graphql_partial::{
     rollup_forbidden_at, ParsedGraphqlErrors,
 };
 
-/// Legacy search query (OAuth / classic tokens). Fine-grained PATs often cannot search orgs.
-pub fn legacy_search_query_string(org: &OrgConfig) -> String {
-    format!("org:{} is:open archived:false", org.name)
-}
-
 /// Cheap org page: small `first` limits, rollup `state` only (no contexts on hot path).
 pub(crate) const ORG_OPEN_QUERY: &str = r"
 query OrgOpenItems($org: String!, $repoAfter: String) {
@@ -115,47 +110,6 @@ query PrFailureContexts($owner: String!, $name: String!, $number: Int!) {
 }
 ";
 
-#[allow(dead_code)]
-const DASHBOARD_QUERY: &str = r"
-query Dashboard($searchQuery: String!, $after: String) {
-  rateLimit { cost remaining resetAt }
-  search(query: $searchQuery, type: ISSUE, first: 100, after: $after) {
-    issueCount
-    pageInfo { hasNextPage endCursor }
-    nodes {
-      __typename
-      ... on Issue {
-        number title url updatedAt
-        author { login }
-        labels(first: 20) { nodes { name } }
-        repository { name nameWithOwner }
-      }
-      ... on PullRequest {
-        number title url updatedAt isDraft
-        author { login }
-        labels(first: 20) { nodes { name } }
-        repository { name nameWithOwner }
-        commits(last: 1) {
-          nodes {
-            commit {
-              statusCheckRollup {
-                state
-                contexts(first: 20) {
-                  nodes {
-                    ... on CheckRun { name conclusion status }
-                    ... on StatusContext { context state }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-";
-
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum GraphqlError {
     #[error("graphql: {0}")]
@@ -189,17 +143,7 @@ pub struct FetchResult {
     pub warning: Option<String>,
     /// Shown when the fetch succeeded but returned no items for a suspicious reason.
     pub empty_hint: Option<String>,
-    pub repos_visible: u32,
     pub section_notice: Option<OrgSectionNotice>,
-}
-
-pub(crate) struct SearchPage {
-    pub items: Vec<RawItem>,
-    pub rate_limit: Option<RateLimitInfo>,
-    pub warning: Option<String>,
-    pub has_next: bool,
-    pub end_cursor: Option<String>,
-    pub issue_count: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -301,101 +245,6 @@ fn graphql_errors_fatal(errors: &serde_json::Value) -> Option<GraphqlError> {
         }
     }
     None
-}
-
-pub(crate) fn suspicious_search_result(json: &serde_json::Value, items_len: usize) -> Option<String> {
-    if items_len > 0 {
-        return None;
-    }
-    if let Some(errors) = json.get("errors") {
-        let msg = errors.to_string();
-        if msg.contains("cannot be searched") || msg.contains("FORBIDDEN") {
-            return Some(
-                "GitHub search is not available for this token (common with fine-grained PATs). The app uses organization.repositories instead.".to_string(),
-            );
-        }
-        if json.pointer("/data/search").is_some() {
-            let count = json
-                .pointer("/data/search/issueCount")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0);
-            if count > 0 {
-                return Some(format!(
-                    "GitHub search reported {count} open items but returned none. Check token permissions."
-                ));
-            }
-            return Some("GraphQL returned errors and no searchable items.".to_string());
-        }
-    }
-    let count = json
-        .pointer("/data/search/issueCount")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
-    if count > 0 {
-        return Some(format!(
-            "GitHub search reported {count} open items but returned none."
-        ));
-    }
-    None
-}
-
-pub(crate) fn ingest_search_response(
-    json: &serde_json::Value,
-    org: &OrgConfig,
-) -> Result<SearchPage, GraphqlError> {
-    if let Some(errors) = json.get("errors") {
-        if let Some(fatal) = graphql_errors_fatal(errors) {
-            return Err(fatal);
-        }
-        if json.get("data").and_then(|d| d.get("search")).is_none() {
-            return Err(GraphqlError::GraphQl(errors.to_string()));
-        }
-    }
-
-    let rate_limit = json.pointer("/data/rateLimit").map(parse_rate_limit);
-
-    let warning = json
-        .get("errors")
-        .and_then(|errors| graphql_partial_warning(errors));
-
-    let search = json
-        .pointer("/data/search")
-        .ok_or_else(|| GraphqlError::GraphQl("missing data.search".to_string()))?;
-
-    let issue_count = search.get("issueCount").and_then(|v| v.as_u64());
-
-    let mut items = Vec::new();
-    let nodes = search
-        .get("nodes")
-        .and_then(|n| n.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    for node in nodes {
-        if let Some(item) = parse_node(&node, false) {
-            if item_matches_org_filter(&item, org) {
-                items.push(item);
-            }
-        }
-    }
-
-    let has_next = search
-        .pointer("/pageInfo/hasNextPage")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let end_cursor = search
-        .pointer("/pageInfo/endCursor")
-        .and_then(|v| v.as_str())
-        .map(String::from);
-
-    Ok(SearchPage {
-        items,
-        rate_limit,
-        warning,
-        has_next,
-        end_cursor,
-        issue_count,
-    })
 }
 
 pub(crate) fn ingest_org_repositories_response(
@@ -917,7 +766,6 @@ pub async fn fetch_org_open_items(
         rate_limit: last_rate,
         warning,
         empty_hint,
-        repos_visible,
         section_notice,
     })
 }
@@ -931,7 +779,6 @@ pub struct MultiOrgFetchResult {
     pub org_section_notices: HashMap<String, OrgSectionNotice>,
     pub warning: Option<String>,
     pub empty_hint: Option<String>,
-    pub repos_visible: u32,
 }
 
 fn merge_budget_line(
@@ -967,7 +814,6 @@ pub async fn fetch_all_orgs_multi(
     let mut org_section_notices = HashMap::new();
     let mut warning = None;
     let mut empty_hint = None;
-    let mut repos_visible = 0u32;
 
     for org in &config.orgs {
         let token = match token_for_org(org) {
@@ -983,7 +829,6 @@ pub async fn fetch_all_orgs_multi(
                 combined.extend(result.items);
                 accumulate_rate_limit(&mut rate_limit, result.rate_limit.clone());
                 merge_budget_line(&mut budget_map, &budget_key, result.rate_limit);
-                repos_visible += result.repos_visible;
                 if result.warning.is_some() {
                     warning = result.warning;
                 }
@@ -1026,7 +871,6 @@ pub async fn fetch_all_orgs_multi(
         org_section_notices,
         warning,
         empty_hint,
-        repos_visible,
     }
 }
 
@@ -1047,30 +891,6 @@ fn org_fetch_error_message(org: &OrgConfig, e: &GraphqlError) -> String {
         GraphqlError::Network(msg) => format!("Network error for \"{}\": {msg}", org.name),
         GraphqlError::GraphQl(msg) => msg.clone(),
     }
-}
-
-pub async fn fetch_all_orgs(
-    client: &reqwest::Client,
-    token: &str,
-    config: &AppConfig,
-) -> Result<FetchResult, GraphqlError> {
-    let multi = fetch_all_orgs_multi(client, config, |_| Ok(token.to_string())).await;
-    if multi.items.is_empty() && multi.org_errors.len() == config.orgs.len() && !config.orgs.is_empty() {
-        let first = multi.org_errors.values().next().cloned().unwrap_or_default();
-        return Err(GraphqlError::GraphQl(first));
-    }
-    Ok(FetchResult {
-        items: multi.items,
-        rate_limit: multi.rate_limit,
-        warning: multi.warning,
-        empty_hint: multi.empty_hint,
-        repos_visible: multi.repos_visible,
-        section_notice: None,
-    })
-}
-
-fn item_matches_org_filter(item: &RawItem, org: &OrgConfig) -> bool {
-    repo_include_exclude(&item.repo, org)
 }
 
 fn parse_pr_in_repo(
@@ -1247,39 +1067,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn legacy_search_query_includes_archived_false() {
-        let org = OrgConfig {
-            name: "springfield-ham-radio".to_string(),
-            credential: None,
-            include: vec![],
-            exclude: vec![],
-        };
-        assert_eq!(
-            legacy_search_query_string(&org),
-            "org:springfield-ham-radio is:open archived:false"
-        );
-    }
-
-    #[test]
-    fn search_fixture_errors_with_issue_count_is_suspicious() {
-        let json: serde_json::Value = serde_json::from_str(include_str!(
-            "../../fixtures/graphql/search_errors_empty_nodes.json"
-        ))
-        .expect("json");
-        let org = OrgConfig {
-            name: "springfield-ham-radio".to_string(),
-            credential: None,
-            include: vec![],
-            exclude: vec![],
-        };
-        let page = ingest_search_response(&json, &org).expect("partial search");
-        assert_eq!(page.items.len(), 0);
-        assert_eq!(page.issue_count, Some(42));
-        let hint = suspicious_search_result(&json, page.items.len());
-        assert!(hint.is_some());
-    }
-
-    #[test]
     fn http_502_is_not_forbidden() {
         let err = {
             let status = 502u16;
@@ -1421,69 +1208,6 @@ mod tests {
         let ci = item.ci.expect("ci");
         assert_eq!(ci.state.as_deref(), Some("FAILURE"));
         assert!(ci.failed_checks.is_empty());
-    }
-
-    #[test]
-    fn paginates_search_results() {
-        let org = OrgConfig {
-            name: "springfield-ham-radio".to_string(),
-            credential: None,
-            include: vec![],
-            exclude: vec![],
-        };
-        let page1: serde_json::Value = serde_json::json!({
-            "data": {
-                "rateLimit": { "cost": 1, "remaining": 4999, "resetAt": "2026-10-10T13:00:00Z" },
-                "search": {
-                    "issueCount": 2,
-                    "pageInfo": { "hasNextPage": true, "endCursor": "cursor-2" },
-                    "nodes": [{
-                        "__typename": "PullRequest",
-                        "number": 1,
-                        "title": "one",
-                        "url": "https://github.com/o/r/pull/1",
-                        "updatedAt": "2026-10-10T12:00:00Z",
-                        "isDraft": false,
-                        "author": { "login": "human" },
-                        "labels": { "nodes": [] },
-                        "repository": { "name": "r", "nameWithOwner": "springfield-ham-radio/r" },
-                        "commits": { "nodes": [] }
-                    }]
-                }
-            }
-        });
-        let page2: serde_json::Value = serde_json::json!({
-            "data": {
-                "rateLimit": { "cost": 1, "remaining": 4998, "resetAt": "2026-10-10T13:00:00Z" },
-                "search": {
-                    "issueCount": 2,
-                    "pageInfo": { "hasNextPage": false, "endCursor": null },
-                    "nodes": [{
-                        "__typename": "Issue",
-                        "number": 2,
-                        "title": "two",
-                        "url": "https://github.com/o/r/issues/2",
-                        "updatedAt": "2026-10-10T12:00:00Z",
-                        "author": { "login": "human" },
-                        "labels": { "nodes": [] },
-                        "repository": { "name": "r", "nameWithOwner": "springfield-ham-radio/r" }
-                    }]
-                }
-            }
-        });
-
-        let p1 = ingest_search_response(&page1, &org).expect("page1");
-        assert!(p1.has_next);
-        assert_eq!(p1.end_cursor.as_deref(), Some("cursor-2"));
-        assert_eq!(p1.items.len(), 1);
-
-        let p2 = ingest_search_response(&page2, &org).expect("page2");
-        assert!(!p2.has_next);
-        assert_eq!(p2.items.len(), 1);
-
-        let mut all = p1.items;
-        all.extend(p2.items);
-        assert_eq!(all.len(), 2);
     }
 
     #[test]

@@ -3,7 +3,6 @@ use std::sync::Arc;
 use reqwest::Client;
 use tauri::{AppHandle, Emitter};
 
-use crate::config::AppConfig;
 use crate::config::OrgConfig;
 use crate::credential::obtain_github_token_for_org;
 use crate::github::rest_writes::{

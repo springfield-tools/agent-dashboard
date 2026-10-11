@@ -89,18 +89,27 @@ fn rate_limit_wait_secs(runtime: &PollRuntime) -> u64 {
 }
 
 fn set_primary_rate_limit_until(runtime: &PollRuntime, reset_at: &str, nanos: u32) {
-    let until = DateTime::parse_from_rfc3339(reset_at)
-        .map(|t| t.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now() + chrono::Duration::minutes(5));
-    let extra = 1 + (nanos as u64 % 5);
-    let until = until + chrono::Duration::seconds(extra as i64);
+    let wait = wait_seconds_for_failure(
+        FailureKind::PrimaryRateLimit,
+        0,
+        None,
+        Some(reset_at),
+        nanos,
+    );
+    let until = Utc::now() + chrono::Duration::seconds(wait as i64);
     if let Ok(mut guard) = runtime.rate_limit_until.lock() {
         *guard = Some(until);
     }
 }
 
 fn set_secondary_rate_limit_until(runtime: &PollRuntime, retry_after_secs: u64, nanos: u32) {
-    let wait = crate::backoff::jitter_seconds(retry_after_secs, nanos);
+    let wait = wait_seconds_for_failure(
+        FailureKind::SecondaryRateLimit,
+        0,
+        Some(retry_after_secs),
+        None,
+        nanos,
+    );
     let until = Utc::now() + chrono::Duration::seconds(wait as i64);
     if let Ok(mut guard) = runtime.rate_limit_until.lock() {
         *guard = Some(until);
