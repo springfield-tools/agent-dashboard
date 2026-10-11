@@ -10,7 +10,7 @@ use crate::backoff::{wait_seconds_for_failure, FailureKind};
 use crate::brakes::{apply_brakes, brake_slow_interval_for_cost, LOW_REMAINING_STOP};
 use crate::config::{save_config, AppConfig};
 use crate::credential::{clear_gh_session_cache, obtain_github_token, uses_gh_credential};
-use crate::etag_probe::evaluate_probe;
+use crate::etag_probe::{evaluate_probe, should_skip_graphql_after_org_probes};
 use crate::github::{fetch_all_orgs, GraphqlError};
 use crate::idle;
 use crate::model::build_dashboard;
@@ -390,7 +390,8 @@ pub async fn run_poll_cycle<R: Runtime>(
             .unwrap_or_default();
 
         if config.use_etag_probe {
-            let mut skip_all = true;
+            let mut probe_outcomes: Vec<Result<crate::etag_probe::ProbeDecision, String>> =
+                Vec::new();
             let mut combined_banner = None;
             for org in &config.orgs {
                 let probe = match evaluate_probe(
@@ -407,16 +408,21 @@ pub async fn run_poll_cycle<R: Runtime>(
                     Ok(p) => p,
                     Err(e) => {
                         log::warn!("etag probe failed, falling back to GraphQL: {e}");
+                        probe_outcomes.push(Err(e));
                         break;
                     }
                 };
+                probe_outcomes.push(Ok(probe.clone()));
                 if !probe.skip_graphql {
-                    skip_all = false;
                     break;
                 }
                 combined_banner = probe.banner.or(combined_banner);
             }
-            if skip_all && !config.orgs.is_empty() {
+            let skip_all = should_skip_graphql_after_org_probes(
+                config.orgs.len(),
+                &probe_outcomes,
+            );
+            if skip_all {
                 if let Some(msg) = combined_banner {
                     state.set_banner(Some(msg));
                 }

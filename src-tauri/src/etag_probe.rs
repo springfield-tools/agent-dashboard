@@ -94,10 +94,36 @@ impl EtagStore {
     }
 }
 
+#[derive(Clone)]
 pub struct ProbeDecision {
     pub skip_graphql: bool,
     pub banner: Option<String>,
     pub mark_stale: bool,
+}
+
+/// Mirrors the org probe loop in `poll.rs`: any error or non-skip result means run GraphQL.
+pub(crate) fn should_skip_graphql_after_org_probes(
+    org_count: usize,
+    outcomes: &[Result<ProbeDecision, String>],
+) -> bool {
+    if org_count == 0 {
+        return false;
+    }
+    let mut skip_all = true;
+    for outcome in outcomes {
+        match outcome {
+            Ok(p) if !p.skip_graphql => {
+                skip_all = false;
+                break;
+            }
+            Ok(_) => {}
+            Err(_) => {
+                skip_all = false;
+                break;
+            }
+        }
+    }
+    skip_all
 }
 
 pub async fn evaluate_probe(
@@ -260,6 +286,65 @@ mod tests {
         };
         assert!(org_repo_allowed("ham-radio-ui", &org));
         assert!(!org_repo_allowed("ham-radio-docs", &org));
+    }
+
+    #[test]
+    fn probe_error_does_not_skip_graphql() {
+        assert!(!should_skip_graphql_after_org_probes(
+            1,
+            &[Err("connection refused".to_string())],
+        ));
+    }
+
+    #[test]
+    fn probe_http_500_outcome_does_not_skip_graphql() {
+        assert!(!should_skip_graphql_after_org_probes(
+            1,
+            &[Ok(ProbeDecision {
+                skip_graphql: false,
+                banner: None,
+                mark_stale: false,
+            })],
+        ));
+    }
+
+    #[tokio::test]
+    async fn probe_issues_500_falls_through_via_httpmock() {
+        use httpmock::prelude::*;
+
+        let server = MockServer::start();
+        let org = OrgConfig {
+            name: "springfield-ham-radio".to_string(),
+            include: vec!["ham-radio-ui".to_string()],
+            exclude: vec![],
+        };
+        let _m = server.mock(|when, then| {
+            when.method(GET)
+                .path("/repos/springfield-ham-radio/ham-radio-ui/issues");
+            then.status(500);
+        });
+
+        let store = EtagStore::load(std::env::temp_dir().join("etag-test-500.json"));
+        let config = AppConfig {
+            use_etag_probe: true,
+            ci_max_staleness_seconds: 300,
+            ..AppConfig::default()
+        };
+        let fetched = (Utc::now() - chrono::Duration::seconds(10)).to_rfc3339();
+        let client = reqwest::Client::new();
+        let decision = evaluate_probe(
+            &client,
+            "test-token",
+            &config,
+            &org,
+            &store,
+            &fetched,
+            &server.base_url(),
+        )
+        .await
+        .expect("probe");
+        assert!(!decision.skip_graphql);
+        assert!(!should_skip_graphql_after_org_probes(1, &[Ok(decision)]));
     }
 
     #[tokio::test]
