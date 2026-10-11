@@ -5,7 +5,7 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 
 use crate::config::LabelsConfig;
-use crate::model::{build_dashboard, DashboardRow, DashboardSnapshot, RawItem};
+use crate::model::{build_dashboard_simple, DashboardRow, DashboardSnapshot, RawItem};
 use crate::row_actions::{comment_starts_with_cursor, RowActionKind};
 
 pub const UNDO_WINDOW_SECS: u64 = 60;
@@ -177,11 +177,25 @@ fn raw_from_row(row: &DashboardRow) -> RawItem {
         is_draft: row.draft,
         labels: row.labels.clone(),
         ci: row.ci.clone(),
+        ci_unknown: false,
     }
 }
 
-fn preserve_bots(mut built: DashboardSnapshot, from: &DashboardSnapshot) -> DashboardSnapshot {
+fn preserve_poll_meta(mut built: DashboardSnapshot, from: &DashboardSnapshot) -> DashboardSnapshot {
     built.bots = from.bots.clone();
+    built.graphql_poll_cost = from.graphql_poll_cost;
+    built.graphql_remaining = from.graphql_remaining;
+    built.graphql_budgets = from.graphql_budgets.clone();
+    for section in &mut built.org_sections {
+        if let Some(prev) = from.org_sections.iter().find(|s| s.org == section.org) {
+            if section.auth_banner.is_none() {
+                section.auth_banner = prev.auth_banner.clone();
+            }
+            if section.section_notice.is_none() {
+                section.section_notice = prev.section_notice.clone();
+            }
+        }
+    }
     built
 }
 
@@ -198,14 +212,14 @@ pub fn apply_optimistic_labels(
             break;
         }
     }
-    let built = build_dashboard(
+    let built = build_dashboard_simple(
         items,
         config,
         &snapshot.fetched_at,
         snapshot.graphql_poll_cost,
         snapshot.graphql_remaining,
     );
-    preserve_bots(built, snapshot)
+    preserve_poll_meta(built, snapshot)
 }
 
 pub fn merged_snapshot(
@@ -228,7 +242,7 @@ pub fn merged_snapshot(
             item.labels = labels.clone();
         }
     }
-    let mut built = build_dashboard(
+    let mut built = build_dashboard_simple(
         items,
         config,
         &snapshot.fetched_at,
@@ -242,10 +256,25 @@ pub fn merged_snapshot(
             if pending.contains(&key) {
                 row.chips.push(crate::model::RowChip {
                     label: "Pending…".to_string(),
+                    variant: "pending".to_string(),
                 });
             }
         }
     }
+    for section in &mut built.org_sections {
+        for group in &mut section.groups {
+            for row in &mut group.items {
+                let key = RowKey::from_row(row);
+                if pending.contains(&key) {
+                    row.chips.push(crate::model::RowChip {
+                        label: "Pending…".to_string(),
+                        variant: "pending".to_string(),
+                    });
+                }
+            }
+        }
+    }
+    built.graphql_budgets = snapshot.graphql_budgets.clone();
     built
 }
 

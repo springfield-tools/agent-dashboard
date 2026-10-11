@@ -4,7 +4,8 @@ use reqwest::Client;
 use tauri::{AppHandle, Emitter};
 
 use crate::config::AppConfig;
-use crate::credential::obtain_github_token;
+use crate::config::OrgConfig;
+use crate::credential::obtain_github_token_for_org;
 use crate::github::rest_writes::{
     apply_label_diff, delete_issue_comment, post_issue_comment, RestWriteError,
 };
@@ -26,14 +27,33 @@ fn find_row(snapshot: &crate::model::DashboardSnapshot, key: &RowKey) -> Option<
             }
         }
     }
+    for section in &snapshot.org_sections {
+        for group in &section.groups {
+            for row in &group.items {
+                if row.org == key.org && row.repo == key.repo && row.number == key.number {
+                    return Some(row.clone());
+                }
+            }
+        }
+    }
     None
 }
 
-fn github_token(state: &AppState) -> Result<String, String> {
+fn github_token_for_org(state: &AppState, org_name: &str) -> Result<String, String> {
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
-    obtain_github_token(&config, state.poll_runtime.gh_token_cache(), false).map_err(|opt| {
-        opt.unwrap_or_else(|| "GitHub token unavailable.".to_string())
-    })
+    let org = config
+        .orgs
+        .iter()
+        .find(|o| o.name == org_name)
+        .cloned()
+        .unwrap_or_else(|| OrgConfig {
+            name: org_name.to_string(),
+            credential: None,
+            include: vec![],
+            exclude: vec![],
+        });
+    obtain_github_token_for_org(&config, &org, state.poll_runtime.gh_token_cache(), false)
+        .map_err(|opt| opt.unwrap_or_else(|| "GitHub token unavailable.".to_string()))
 }
 
 fn lock_dashboard(state: &AppState) -> Result<crate::model::DashboardSnapshot, String> {
@@ -107,9 +127,19 @@ async fn execute_inner(
     }
 
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
-    let token = github_token(state.as_ref())?;
-
     let snapshot = lock_dashboard(state.as_ref())?;
+    let row_for_token = {
+        let write_guard = state.write_state.lock().map_err(|_| "write lock")?;
+        let merged = merged_snapshot(
+            &snapshot,
+            &config,
+            &write_guard.optimistic_labels,
+            &write_guard.pending,
+        );
+        find_row(&merged, &key).ok_or_else(|| "Row not found.".to_string())?
+    };
+    let token = github_token_for_org(state.as_ref(), &row_for_token.org)?;
+
     let (row, to_add, to_remove, body) = {
         let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
         let merged = merged_snapshot(
@@ -239,7 +269,18 @@ pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(),
         .build()
         .map_err(|e| e.to_string())?;
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
-    let token = github_token(state_ref)?;
+
+    let undo_peek = {
+        let write_guard = state.write_state.lock().map_err(|_| "write lock")?;
+        write_guard
+            .undo
+            .as_ref()
+            .ok_or_else(|| "Nothing to undo.".to_string())?
+            .key
+            .org
+            .clone()
+    };
+    let token = github_token_for_org(state_ref, &undo_peek)?;
 
     let undo = {
         let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
@@ -300,7 +341,17 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
         .user_agent("agent-dashboard")
         .build()
         .map_err(|e| e.to_string())?;
-    let token = github_token(state_ref)?;
+    let org_for_token = {
+        let write_guard = state.write_state.lock().map_err(|_| "write lock")?;
+        write_guard
+            .partial
+            .as_ref()
+            .ok_or_else(|| "No failed step to retry.".to_string())?
+            .key
+            .org
+            .clone()
+    };
+    let token = github_token_for_org(state_ref, &org_for_token)?;
 
     let partial = {
         let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;

@@ -27,7 +27,7 @@ pub fn write_snapshot_file(path: &Path, snapshot: &DashboardSnapshot) -> Result<
 mod tests {
     use super::*;
     use crate::config::AppConfig;
-    use crate::model::build_dashboard;
+    use crate::model::build_dashboard_simple;
 
     #[test]
     fn round_trip_snapshot_file() {
@@ -36,10 +36,10 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("dir");
         let path = dir.join("snapshot.json");
         let config = AppConfig::default();
-        let snapshot = build_dashboard(vec![], &config, "2026-10-10T12:00:00Z", None, None);
+        let snapshot = build_dashboard_simple(vec![], &config, "2026-10-10T12:00:00Z", None, None);
         write_snapshot_file(&path, &snapshot).expect("write");
         let loaded = load_snapshot_file(&path).expect("load");
-        assert_eq!(loaded.schema_version, 1);
+        assert_eq!(loaded.schema_version, 2);
         assert_eq!(loaded.fetched_at, snapshot.fetched_at);
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -379,7 +379,7 @@ Token settings to document in the README:
 - Resource owner: `springfield-ham-radio` (add `springfield-tools` when that org is in the config)
 - Repository access: all repositories, so a new repo appears without a new token
 - Phases 1–4: Metadata Read (automatic), Issues Read, Pull requests Read, Commit statuses Read. Fine-grained PATs have no **Checks** permission; `statusCheckRollup.state` still works on public repos, but `CheckRun` names in rollup contexts may be empty until GitHub closes that gap (or use `credential = "gh"`).
-- Phase 5: the same list, with Issues and Pull requests raised to Read and write. Commit statuses stays Read. Contents stays off unless rollups come back empty on a private repo
+- Phase 5: the same list, with Issues and Pull requests raised to Read and write. Commit statuses stays Read. For **private** repos, add **Contents** Read when GraphQL returns `Resource not accessible by personal access token` on `statusCheckRollup` (partial errors); the popover shows a one-line org banner instead of raw JSON
 - If a future private repo returns an empty rollup, add Contents Read then
 - Expiration: 90 days is a reasonable first choice
 
@@ -520,8 +520,6 @@ Out of scope for v1. Do not build these in the phases below.
 - **CLI dump** of `snapshot.json` for the morning summary, for hosts where the tray app is not running.
 - **Device-flow OAuth** and **Apple notarization**, when someone besides Bryan installs the app.
 - **Snooze, author filter, keyboard shortcut, menu-bar color dots.** Product polish after the live poll is trustworthy.
-- **Multiple Keychain PATs per org.** A fine-grained PAT has one resource owner. A later version could map each `[[orgs]]` entry to its own Keychain item, or Bryan switches to `credential = "gh"` when polling several owners. Phase 5 uses one token for all configured orgs.
-
 ## 7. Phased build
 
 Each phase merges on its own. Later phases assume the earlier ones are on `main`. Commands assume:
@@ -685,6 +683,48 @@ There is no documented `@cursor stop`. Undo does not send `autofix off`.
 - The poller is unchanged: it never comments or relabels on its own.
 
 **Bryan tests.** From `~/Development/springfield-tools/agent-dashboard`, run `yarn tauri:dev`. Use a **scratch issue in a `springfield-ham-radio` repo** (not `springfield-tools/agent-dashboard` unless you add that org and use `credential = "gh"`). A Keychain fine-grained PAT is tied to one resource owner (default config: `springfield-ham-radio` only). Upgrade the PAT to Issues and Pull requests **Read and write**, re-save in Settings. Add `needs-testing` on the scratch issue (leave `ham-radio-ui` #84 alone), run Testing passed → Ready to merge, and confirm labels and the audit comment on GitHub. Undo within ~60s and confirm labels and comment are gone. Send back with a short note — **`@cursor` starts a real cloud agent** on your Cursor account. Remove scratch labels when finished.
+
+### Phase 5.1 — Color and multi-org
+
+**Scope.** Tinted row chips (issue/PR, status labels, CI, label diffs) with readable contrast in light and dark mode. Slightly darker row cards vs the popover background. Default config lists `springfield-ham-radio`, `springfield-tools`, and `springfield-usa`. Popover groups by org in collapsible sections (per-org tray-style counts on the header, status groups inside). Persist org expanded/collapsed in `ui-state.json`. A segmented control in the popover header (All / Issues / PRs) filters visible rows and recomputes org and group counts; the menu-bar tray title stays unfiltered. The choice persists in `ui-state.json`. The collapsed Dependabot footer hides when Issues is selected. Per-org `credential` on `[[orgs]]` with Keychain account `github-token-{org}`; migrate legacy `github-token` to `springfield-ham-radio`. Settings shows per-org token save/remove and auth readiness. Per-org auth banners when a token is missing or rejected; tray totals stay global. Row writes and GraphQL budget math use each org's credential bucket. ADR [0008](adr/0008-multi-org-credentials-and-grouping.md).
+
+**Acceptance.**
+
+- Chips use semantic tint classes; CI failing rows show failed check names (cap three plus “and N more”).
+- Three org sections appear when all three are in config; ham-radio keeps working without re-pasting the PAT after upgrade.
+- `springfield-tools` and `springfield-usa` poll when each has a PAT or `credential = "gh"`.
+- Footer lists GraphQL pts/poll and remaining per credential key when multiple buckets were used.
+- Org collapse state survives quit and relaunch.
+- Type filter All / Issues / PRs updates row lists and section counts; tray title unchanged; Dependabot footer hidden on Issues; filter survives relaunch.
+
+**Bryan tests.**
+
+```bash
+cd ~/Development/springfield-tools/agent-dashboard
+yarn tauri:dev
+```
+
+An existing `~/Library/Application Support/com.springfield.agent-dashboard/config.toml` is **not** rewritten. `[[orgs]]` already in that file wins, so a Phase 3–5 file that only lists `springfield-ham-radio` keeps polling that one org. Quit the app, then append these two blocks (leave the ham-radio block as it is) and relaunch:
+
+```toml
+[[orgs]]
+name = "springfield-tools"
+include = []
+exclude = []
+
+[[orgs]]
+name = "springfield-usa"
+include = []
+exclude = []
+```
+
+Settings lists only orgs present in that file. It does not add orgs. After the edit, Settings shows three rows. Ham-radio stays **ready** without re-pasting the PAT (legacy Keychain item `github-token` is copied to `github-token-springfield-ham-radio` on first read, and the original is removed only after that copy reads back).
+
+Confirm tinted chips and darker cards in light and dark mode. Expand/collapse an org, quit, relaunch, and confirm the state.
+
+Create a fine-grained PAT for **springfield-tools** (resource owner springfield-tools): Issues and Pull requests **Read and write**, Metadata **Read**, Commit statuses **Read**, and **Contents** Read if any springfield-tools repo is private and CI rollups are denied. Save under **springfield-tools** in Settings. Repeat for **springfield-usa**, or set `credential = "gh"` on that `[[orgs]]` entry if `gh auth login` already covers it.
+
+Scratch write test on `springfield-ham-radio` as in Phase 5. Open a row in `springfield-tools` only after that org's token is ready.
 
 ### Phase 6 — Release
 
