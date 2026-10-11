@@ -1,17 +1,7 @@
 name: Release Tauri
 
+# Manual rebuild when the macOS upload failed after semantic-release created the tag.
 on:
-  workflow_call:
-    inputs:
-      tag:
-        description: Git tag to build (e.g. v0.2.0)
-        required: true
-        type: string
-    secrets:
-      RELEASE_APP_ID:
-        required: true
-      RELEASE_APP_PRIVATE_KEY:
-        required: true
   workflow_dispatch:
     inputs:
       tag:
@@ -22,7 +12,6 @@ on:
 permissions:
   contents: write
 
-# One queue per tag; do not cancel an in-flight upload when a newer push starts.
 concurrency:
   group: release-tauri-${{ inputs.tag }}
   cancel-in-progress: false
@@ -31,6 +20,16 @@ jobs:
   publish-macos:
     runs-on: macos-latest
     steps:
+      - id: release-secrets
+        env:
+          RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$RELEASE_APP_ID" ] || [ -z "$RELEASE_APP_PRIVATE_KEY" ]; then
+            echo "Release GitHub App secrets are not set."
+            exit 1
+          fi
+
       - uses: actions/create-github-app-token@v2
         id: app-token
         with:

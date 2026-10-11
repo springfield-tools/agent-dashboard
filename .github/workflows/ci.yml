@@ -95,10 +95,45 @@ jobs:
   tauri:
     needs: release
     if: needs.release.outputs.tag != ''
+    runs-on: macos-latest
     concurrency:
       group: release-${{ github.ref }}
       cancel-in-progress: false
-    uses: ./.github/workflows/release-tauri.yml
-    with:
-      tag: ${{ needs.release.outputs.tag }}
-    secrets: inherit
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release.outputs.tag }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - run: corepack enable
+
+      - run: yarn install --immutable
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        with:
+          tagName: ${{ needs.release.outputs.tag }}
+          releaseDraft: false
+          prerelease: ${{ contains(needs.release.outputs.tag, '-') }}
+          args: --target aarch64-apple-darwin
