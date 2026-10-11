@@ -30,7 +30,7 @@ fn find_row(snapshot: &crate::model::DashboardSnapshot, key: &RowKey) -> Option<
 
 fn github_token(state: &AppState) -> Result<String, String> {
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
-    obtain_github_token(&config, &state.poll_runtime.gh_token_cache, false).map_err(|opt| {
+    obtain_github_token(&config, state.poll_runtime.gh_token_cache(), false).map_err(|opt| {
         opt.unwrap_or_else(|| "GitHub token unavailable.".to_string())
     })
 }
@@ -106,9 +106,9 @@ async fn execute_inner(
     }
 
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
-    let token = github_token(state)?;
+    let token = github_token(state.as_ref())?;
 
-    let snapshot = lock_dashboard(state)?;
+    let snapshot = lock_dashboard(state.as_ref())?;
     let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
     let merged = merged_snapshot(
         &snapshot,
@@ -149,6 +149,7 @@ async fn execute_inner(
             return Err(msg);
         }
         Ok(comment_id) => {
+            drop(write_guard);
             let label_result = apply_label_diff(
                 client,
                 &token,
@@ -160,6 +161,7 @@ async fn execute_inner(
             )
             .await;
 
+            let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
             match label_result {
                 Ok(()) => {
                     write_guard.pending.remove(&key);
@@ -221,21 +223,25 @@ pub async fn execute_row_action(
 }
 
 pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(), String> {
+    let state_ref = state.as_ref();
     let client = Client::builder()
         .user_agent("agent-dashboard")
         .build()
         .map_err(|e| e.to_string())?;
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
-    let token = github_token(state)?;
+    let token = github_token(state_ref)?;
 
-    let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
-    let undo = write_guard
-        .undo
-        .take()
-        .ok_or_else(|| "Nothing to undo.".to_string())?;
-    write_guard.expire_undo();
+    let undo = {
+        let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
+        let undo = write_guard
+            .undo
+            .take()
+            .ok_or_else(|| "Nothing to undo.".to_string())?;
+        write_guard.expire_undo();
+        undo
+    };
 
-    let snapshot = lock_dashboard(state)?;
+    let snapshot = lock_dashboard(state_ref)?;
     let row = find_row(&snapshot, &undo.key).ok_or_else(|| "Row no longer visible.".to_string())?;
 
     let status = status_label_names(&config.labels);
@@ -260,6 +266,7 @@ pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(),
         }
     }
 
+    let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
     write_guard.optimistic_labels.remove(&undo.key);
     write_guard.pending.remove(&undo.key);
     write_guard.toast = Some(if undo.wakes_agent {
@@ -276,18 +283,21 @@ pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(),
 }
 
 pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result<(), String> {
+    let state_ref = state.as_ref();
     let client = Client::builder()
         .user_agent("agent-dashboard")
         .build()
         .map_err(|e| e.to_string())?;
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
-    let token = github_token(state)?;
+    let token = github_token(state_ref)?;
 
-    let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
-    let partial = write_guard
-        .partial
-        .take()
-        .ok_or_else(|| "No failed step to retry.".to_string())?;
+    let partial = {
+        let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
+        write_guard
+            .partial
+            .take()
+            .ok_or_else(|| "No failed step to retry.".to_string())?
+    };
 
     match partial.kind {
         crate::write_state::PartialFailureKind::RetryLabels => {
@@ -302,6 +312,7 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
             )
             .await
             .map_err(map_write_error)?;
+            let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
             write_guard.toast = Some("Labels applied.".to_string());
         }
         crate::write_state::PartialFailureKind::RetryComment => {
@@ -326,6 +337,7 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
             )
             .await
             .map_err(map_write_error)?;
+            let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
             write_guard.undo = Some(crate::write_state::UndoRecord {
                 key: partial.key.clone(),
                 previous_labels: vec![],
@@ -340,7 +352,6 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
             write_guard.toast = Some("Comment and labels applied.".to_string());
         }
     }
-    drop(write_guard);
     state.set_banner(None);
     let _ = app.emit("dashboard-updated", ());
     Ok(())

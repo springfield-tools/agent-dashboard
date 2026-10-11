@@ -35,6 +35,10 @@ pub struct PollRuntime {
 }
 
 impl PollRuntime {
+    pub(crate) fn gh_token_cache(&self) -> &Mutex<Option<String>> {
+        &self.gh_token_cache
+    }
+
     pub fn new() -> Self {
         Self {
             wake: Notify::new(),
