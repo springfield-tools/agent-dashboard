@@ -256,8 +256,8 @@ pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(),
         &undo.owner,
         &undo.repo,
         undo.number,
-        &undo.undo_labels_remove,
         &undo.undo_labels_add,
+        &undo.undo_labels_remove,
     )
     .await;
 
