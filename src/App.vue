@@ -1,5 +1,5 @@
 <template>
-  <div class="popover">
+  <div ref="popoverEl" class="popover">
     <header class="header">
       <div class="header-row">
         <span class="header-title">Agent Dashboard</span>
@@ -66,33 +66,40 @@
         <div
           v-for="row in group.items"
           :key="`${row.repo}-${row.number}`"
-          class="row row-wrap"
+          class="row"
+          @contextmenu.prevent="onRowContextMenu($event, group.id, row)"
         >
-          <button type="button" class="row row-button row-main" @click="openRow(row.url)">
-            <span class="row-top">
-              <span class="row-repo">{{ row.repo }}</span>
-              <span class="row-number">#{{ row.number }}</span>
-              <span v-if="row.draft" class="chip chip-kind">Draft</span>
-              <span v-else class="chip chip-kind">{{ row.kind === 'pr' ? 'PR' : 'Issue' }}</span>
-            </span>
-            <span class="row-title">{{ row.title }}</span>
-            <span class="row-meta">
-              <span class="row-author">@{{ row.author }}</span>
-              <span class="row-time">{{ formatRelativeTime(row.updatedAt) }}</span>
-            </span>
-            <span v-if="row.chips.length" class="row-chips">
-              <span v-for="chip in row.chips" :key="chip.label" class="chip">{{ chip.label }}</span>
-            </span>
-          </button>
-          <button
-            v-if="!configStatus?.fixtureMode && rowMenuEntries(group.id).length"
-            type="button"
-            class="row-menu-btn"
-            title="Actions"
-            @click.stop="openRowPicker(group.id, row)"
-          >
-            ⋯
-          </button>
+          <div class="row-surface">
+            <button type="button" class="row-button" @click="openRow(row.url)">
+              <span class="row-top">
+                <span class="row-top-meta">
+                  <span class="row-repo">{{ row.repo }}</span>
+                  <span class="row-number">#{{ row.number }}</span>
+                  <span v-if="row.draft" class="chip chip-kind">Draft</span>
+                  <span v-else class="chip chip-kind">{{ row.kind === 'pr' ? 'PR' : 'Issue' }}</span>
+                </span>
+              </span>
+              <span class="row-title">{{ row.title }}</span>
+              <span class="row-meta">
+                <span class="row-author">@{{ row.author }}</span>
+                <span class="row-time">{{ formatRelativeTime(row.updatedAt) }}</span>
+              </span>
+              <span v-if="row.chips.length" class="row-chips">
+                <span v-for="chip in row.chips" :key="chip.label" class="chip">{{ chip.label }}</span>
+              </span>
+            </button>
+            <button
+              v-if="!configStatus?.fixtureMode && rowMenuEntries(group.id).length"
+              type="button"
+              class="row-more"
+              :aria-label="`Actions for ${row.repo} #${row.number}`"
+              aria-haspopup="menu"
+              :aria-expanded="isContextMenuForRow(group.id, row)"
+              @click.stop="openContextMenu($event, group.id, row)"
+            >
+              ⋯
+            </button>
+          </div>
         </div>
       </section>
       <p v-if="!snapshot?.groups.length" class="empty">No open items in this view.</p>
@@ -108,40 +115,70 @@
       <span class="undo-hint">{{ writeUi.partialFailure.message }}</span>
     </div>
 
-    <dialog v-if="rowPicker" class="settings-sheet" open @click.self="rowPicker = null">
-      <div class="settings-panel" @click.stop>
-        <h2 class="settings-title">Row actions</h2>
-        <p class="action-target">
-          {{ rowPicker.row.repo }}#{{ rowPicker.row.number }}
-        </p>
-        <button
-          v-for="entry in rowMenuEntries(rowPicker.groupId)"
-          :key="entry.label"
-          type="button"
-          class="btn-text row-picker-btn"
-          @click="startAction(rowPicker.groupId, rowPicker.row, entry)"
-        >
-          {{ entry.label }}
-        </button>
-        <button type="button" class="btn-text" @click="rowPicker = null">Cancel</button>
-      </div>
-    </dialog>
+    <div
+      v-if="contextMenu"
+      class="context-menu-backdrop"
+      aria-hidden="true"
+      @click="closeContextMenu"
+      @contextmenu.prevent="closeContextMenu"
+    />
+    <div
+      v-if="contextMenu"
+      ref="contextMenuEl"
+      class="context-menu"
+      role="menu"
+      :style="contextMenuStyle"
+      @keydown.escape.prevent="closeContextMenu"
+    >
+      <button
+        v-for="(entry, index) in rowMenuEntries(contextMenu.groupId)"
+        :key="entry.label"
+        type="button"
+        class="context-menu-item"
+        role="menuitem"
+        :tabindex="index === 0 ? 0 : -1"
+        @click="pickContextMenuAction(entry)"
+      >
+        {{ entry.label }}
+      </button>
+    </div>
 
-    <dialog v-if="actionSheetOpen" class="settings-sheet" open @click.self="closeActionSheet">
-      <div class="settings-panel action-panel" @click.stop>
-        <h2 class="settings-title">{{ actionSheetTitle }}</h2>
+    <div
+      v-if="actionSheetOpen"
+      class="action-sheet-overlay"
+      @click.self="closeActionSheet"
+    >
+      <div
+        ref="actionSheetEl"
+        class="action-sheet"
+        role="dialog"
+        aria-modal="true"
+        :aria-labelledby="actionSheetTitleId"
+        @keydown.escape.prevent="closeActionSheet"
+      >
+        <h2 :id="actionSheetTitleId" class="settings-title">{{ actionSheetTitle }}</h2>
         <p v-if="actionTarget" class="action-target">
           {{ actionTarget.row.repo }}#{{ actionTarget.row.number }} · {{ actionTarget.row.title }}
         </p>
-        <p v-if="actionPreview" class="action-diff">
-          <strong>Labels</strong>
-          <span v-if="actionPreview.labelsToRemove.length">
-            − {{ actionPreview.labelsToRemove.join(', ') }}
+        <div v-if="actionPreview" class="action-diff">
+          <span class="action-diff-label">Labels</span>
+          <span class="row-chips action-diff-chips">
+            <span
+              v-for="name in actionPreview.labelsToRemove"
+              :key="`rm-${name}`"
+              class="chip chip-label-remove"
+            >
+              − {{ name }}
+            </span>
+            <span
+              v-for="name in actionPreview.labelsToAdd"
+              :key="`add-${name}`"
+              class="chip chip-label-add"
+            >
+              + {{ name }}
+            </span>
           </span>
-          <span v-if="actionPreview.labelsToAdd.length">
-            + {{ actionPreview.labelsToAdd.join(', ') }}
-          </span>
-        </p>
+        </div>
         <pre v-if="actionPreview" class="action-comment">{{ actionPreview.commentBody }}</pre>
         <div v-if="actionSheetMode === 'testingPassed'" class="testing-passed-choice">
           <label class="control-label">
@@ -182,7 +219,7 @@
           />
         </label>
         <p v-if="actionError" class="banner banner-error">{{ actionError }}</p>
-        <div class="settings-actions action-buttons">
+        <div class="action-sheet-footer">
           <template v-if="actionSheetMode === 'testingPassed'">
             <button
               type="button"
@@ -208,7 +245,7 @@
           </button>
         </div>
       </div>
-    </dialog>
+    </div>
 
     <footer class="footer">
       <button
@@ -282,9 +319,14 @@
 import { openUrl } from '@tauri-apps/plugin-opener';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { computed, onMounted, onUnmounted, ref } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { formatRelativeTime } from './formatRelative';
+import {
+  computeContextMenuPosition,
+  estimateContextMenuHeight,
+  rowMenuEntries,
+} from './rowActionMenu';
 import {
   DEFAULT_POLL_INTERVAL_SECONDS,
   POLL_INTERVAL_PRESETS,
@@ -311,7 +353,25 @@ const actionPreview = ref<RowActionPreview | null>(null);
 const actionNote = ref('');
 const actionError = ref('');
 const actionBusy = ref(false);
-const rowPicker = ref<{ groupId: string; row: DashboardRow } | null>(null);
+const popoverEl = ref<HTMLElement | null>(null);
+const contextMenuEl = ref<HTMLElement | null>(null);
+const actionSheetEl = ref<HTMLElement | null>(null);
+const contextMenu = ref<{
+  groupId: string;
+  row: DashboardRow;
+  left: number;
+  top: number;
+} | null>(null);
+const contextMenuStyle = computed(() => {
+  if (!contextMenu.value) {
+    return {};
+  }
+  return {
+    left: `${contextMenu.value.left}px`,
+    top: `${contextMenu.value.top}px`,
+  };
+});
+const actionSheetTitleId = 'action-sheet-title';
 const testingPassedChoice = ref<RowActionKind>('testingPassedReady');
 let previewDebounce: ReturnType<typeof setTimeout> | undefined;
 let unlistenUpdated: (() => void) | undefined;
@@ -324,25 +384,6 @@ async function reload(): Promise<void> {
     writeUi.value = await invoke<WriteUiState>('write_ui_state_cmd');
   } catch {
     snapshot.value = null;
-  }
-}
-
-function rowMenuEntries(groupId: string): { mode: RowActionKind | 'testingPassed'; label: string }[] {
-  switch (groupId) {
-    case 'needs-testing':
-      return [
-        { mode: 'testingPassed', label: 'Testing passed…' },
-        { mode: 'sendBackToAgent', label: 'Send back to agent' },
-      ];
-    case 'ci-failing':
-      return [{ mode: 'sendBackToAgent', label: 'Send back to agent' }];
-    case 'needs-input':
-      return [{ mode: 'answer', label: 'Answer' }];
-    case 'not-started':
-    case 'agent-working':
-      return [{ mode: 'approveReadyToMerge', label: 'Approve / ready to merge' }];
-    default:
-      return [];
   }
 }
 
@@ -405,8 +446,60 @@ function onTestingPassedChoiceChange(): void {
   void refreshPreview(testingPassedChoice.value);
 }
 
-function openRowPicker(groupId: string, row: DashboardRow): void {
-  rowPicker.value = { groupId, row };
+function isContextMenuForRow(groupId: string, row: DashboardRow): boolean {
+  if (!contextMenu.value) {
+    return false;
+  }
+  return (
+    contextMenu.value.groupId === groupId &&
+    contextMenu.value.row.org === row.org &&
+    contextMenu.value.row.repo === row.repo &&
+    contextMenu.value.row.number === row.number
+  );
+}
+
+function closeContextMenu(): void {
+  contextMenu.value = null;
+}
+
+function openContextMenu(event: MouseEvent, groupId: string, row: DashboardRow): void {
+  const entries = rowMenuEntries(groupId);
+  if (!entries.length || configStatus.value?.fixtureMode) {
+    return;
+  }
+  const popover = popoverEl.value;
+  if (!popover) {
+    return;
+  }
+  const rect = popover.getBoundingClientRect();
+  const menuHeight = estimateContextMenuHeight(entries.length);
+  const pos = computeContextMenuPosition(
+    rect,
+    event.clientX,
+    event.clientY,
+    { width: 200, height: menuHeight },
+  );
+  contextMenu.value = { groupId, row, left: pos.left, top: pos.top };
+  void nextTick(() => {
+    const first = contextMenuEl.value?.querySelector<HTMLButtonElement>('[role="menuitem"]');
+    first?.focus();
+  });
+}
+
+function onRowContextMenu(event: MouseEvent, groupId: string, row: DashboardRow): void {
+  openContextMenu(event, groupId, row);
+}
+
+function pickContextMenuAction(entry: {
+  mode: RowActionKind | 'testingPassed';
+  label: string;
+}): void {
+  if (!contextMenu.value) {
+    return;
+  }
+  const { groupId, row } = contextMenu.value;
+  closeContextMenu();
+  void startAction(groupId, row, entry);
 }
 
 async function startAction(
@@ -414,7 +507,6 @@ async function startAction(
   row: DashboardRow,
   entry: { mode: RowActionKind | 'testingPassed'; label: string },
 ): Promise<void> {
-  rowPicker.value = null;
   actionError.value = '';
   actionBanner.value = null;
   actionTarget.value = { groupId, row };
@@ -446,6 +538,42 @@ function closeActionSheet(): void {
   actionPreview.value = null;
   actionError.value = '';
 }
+
+function onDocumentKeydown(event: KeyboardEvent): void {
+  if (contextMenu.value && event.key === 'Escape') {
+    event.preventDefault();
+    closeContextMenu();
+    return;
+  }
+  if (!actionSheetOpen.value || actionBusy.value) {
+    return;
+  }
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    closeActionSheet();
+    return;
+  }
+  if (event.key === 'Enter' && event.target instanceof HTMLElement) {
+    if (event.target.tagName === 'TEXTAREA') {
+      return;
+    }
+    event.preventDefault();
+    if (actionSheetMode.value === 'testingPassed') {
+      void confirmAction(testingPassedChoice.value);
+    } else {
+      void confirmAction(actionSheetMode.value as RowActionKind);
+    }
+  }
+}
+
+watch(actionSheetOpen, (open) => {
+  if (open) {
+    void nextTick(() => {
+      const primary = actionSheetEl.value?.querySelector<HTMLButtonElement>('.btn-primary');
+      primary?.focus();
+    });
+  }
+});
 
 async function confirmAction(action: RowActionKind): Promise<void> {
   if (!actionTarget.value) {
@@ -499,6 +627,7 @@ async function onRetryPartial(): Promise<void> {
 }
 
 onMounted(async () => {
+  document.addEventListener('keydown', onDocumentKeydown);
   await reload();
   unlistenUpdated = await listen('dashboard-updated', () => {
     void reload();
@@ -509,6 +638,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  document.removeEventListener('keydown', onDocumentKeydown);
   unlistenUpdated?.();
   unlistenSettings?.();
 });
