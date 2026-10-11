@@ -10,7 +10,7 @@ Releases use [semantic-release](https://github.com/semantic-release/semantic-rel
 
 ## Decision
 
-- **Versioning:** Conventional Commits on `main` drive semantic-release. Plugins match `package.json` `release` config: changelog, `package.json`, `src-tauri/Cargo.toml` / `Cargo.lock` (via `scripts/set-cargo-version.mjs`), GitHub Release, and a git commit `chore(release): <version> [skip ci]`.
+- **Versioning:** Conventional Commits on `main` drive semantic-release. Plugins match `package.json` `release` config: changelog, `package.json`, `src-tauri/Cargo.toml` / `Cargo.lock` (via `scripts/set-cargo-version.mjs`), a git commit `chore(release): <version> [skip ci]`, then `@semantic-release/github` so the tag points at the version-bump commit (not the pre-bump SHA).
 - **CI:** The `release` job runs after `build` on pushes to `main` / `beta`. If `RELEASE_APP_ID` or `RELEASE_APP_PRIVATE_KEY` is unset, the job logs a skip and exits successfully so `main` stays green before Bryan wires secrets.
 - **Auth:** `actions/create-github-app-token@v2` mints a token from repository (or org) secrets `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY`.
 - **Artifacts:** A follow-on `tauri` job calls `.github/workflows/release-tauri.yml` on `macos-latest` only, building an **unsigned** Apple Silicon `.app` / `.dmg` via `tauri-apps/tauri-action@v1` and attaching assets to the GitHub Release.
