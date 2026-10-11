@@ -1,0 +1,16 @@
+{
+  "data": {
+    "rateLimit": { "cost": 1, "remaining": 4999, "resetAt": "2026-10-10T13:00:00Z" },
+    "search": {
+      "issueCount": 42,
+      "pageInfo": { "hasNextPage": false, "endCursor": null },
+      "nodes": []
+    }
+  },
+  "errors": [
+    {
+      "type": "FORBIDDEN",
+      "message": "The listed users and repositories cannot be searched either because the resources do not exist or you do not have permission to search them."
+    }
+  ]
+}

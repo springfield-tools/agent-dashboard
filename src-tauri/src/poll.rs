@@ -267,7 +267,18 @@ pub async fn run_poll_cycle<R: Runtime>(
         if let Ok(mut guard) = state.poll_runtime.rate_limit_until.lock() {
             *guard = None;
         }
-        if let Some(w) = fetch.warning {
+        if fetch.items.is_empty() {
+            if let Some(hint) = fetch.empty_hint {
+                state.set_banner(Some(hint));
+            } else if let Some(w) = fetch.warning {
+                state.set_banner(Some(w));
+            } else {
+                state.set_banner(Some(
+                    "GitHub returned no open items. Check token permissions and org config."
+                        .to_string(),
+                ));
+            }
+        } else if let Some(w) = fetch.warning {
             state.set_banner(Some(w));
         } else {
             state.set_banner(None);
