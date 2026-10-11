@@ -162,6 +162,14 @@ fn parse_retry_after(headers: &HeaderMap) -> Option<u64> {
         .and_then(|s| s.parse().ok())
 }
 
+fn header_reset_at(headers: &HeaderMap) -> Option<String> {
+    header_u64(headers, "x-ratelimit-reset").and_then(|epoch| {
+        chrono::DateTime::from_timestamp(epoch as i64, 0).map(|t| {
+            t.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        })
+    })
+}
+
 fn classify_http_error(status: u16, headers: &HeaderMap, body: &str) -> GraphqlError {
     let remaining = header_u64(headers, "x-ratelimit-remaining");
     let retry_after = parse_retry_after(headers);
@@ -173,7 +181,7 @@ fn classify_http_error(status: u16, headers: &HeaderMap, body: &str) -> GraphqlE
     if rate_limited {
         return GraphqlError::RateLimited {
             retry_after_secs: retry_after,
-            reset_at: None,
+            reset_at: header_reset_at(headers),
             message: truncate_body(body),
         };
     }

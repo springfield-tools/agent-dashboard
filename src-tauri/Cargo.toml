@@ -36,6 +36,10 @@ tokio = { version = "1", features = ["time", "sync", "macros"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }
+block2 = "0.6.2"
+objc2 = "0.6.3"
+objc2-app-kit = { version = "0.3.2", features = ["NSWorkspace"] }
+objc2-foundation = { version = "0.3.2", features = ["NSNotification", "block2", "NSOperation", "NSString"] }
 
 [profile.release]
 codegen-units = 1

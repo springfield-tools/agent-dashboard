@@ -21,6 +21,6 @@ Across many org repos, REST per-repo polling is heavy. Combined commit status on
 
 ## Consequences
 
-- GraphQL cost scales with repo count and open PR/issue volume (typically higher per tick than a single search, but reliable with fine-grained PATs). Budget tables in `docs/PLAN.md` should be revisited for org-repository polling.
+- GraphQL cost scales with repo count and open PR/issue volume. Measured **2026-10-11**: one `springfield-ham-radio` org page (12 repos, 33 open items) costs **14** points per tick (~1,680/hr at the 30s default). Budget tables and brakes in `docs/PLAN.md` use that number; headroom planning uses **20** points/tick.
 - Paused polling spends no GraphQL points.
 - A follow-up phase adds row write actions without changing the poller’s read-only contract until invoked by the user.

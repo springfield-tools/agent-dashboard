@@ -6,9 +6,13 @@ use chrono::{DateTime, Utc};
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tokio::sync::Notify;
 
+use crate::backoff::{wait_seconds_for_failure, FailureKind};
+use crate::brakes::{apply_brakes, brake_slow_interval_for_cost, LOW_REMAINING_STOP};
 use crate::config::{save_config, AppConfig};
-use crate::github::{fetch_all_orgs, GraphqlError};
 use crate::credential::{clear_gh_session_cache, obtain_github_token, uses_gh_credential};
+use crate::etag_probe::{evaluate_probe, EtagStore};
+use crate::github::{fetch_all_orgs, GraphqlError};
+use crate::idle;
 use crate::model::build_dashboard;
 use crate::pause::{clear_expired_timed_pause, is_polling_paused, seconds_until_timed_resume};
 use crate::snapshot::write_snapshot_file;
@@ -20,8 +24,12 @@ pub struct PollRuntime {
     in_flight: AtomicBool,
     failure_backoff_secs: Mutex<u64>,
     rate_limit_until: Mutex<Option<DateTime<Utc>>>,
-    /// In-memory only; cleared on 401 when `credential = "gh"`.
     gh_token_cache: Mutex<Option<String>>,
+    last_poll_cost: Mutex<i32>,
+    brake_slow_interval: Mutex<u64>,
+    last_rate_remaining: Mutex<Option<i32>>,
+    last_rate_reset_at: Mutex<Option<String>>,
+    pub idle_pause_active: AtomicBool,
 }
 
 impl PollRuntime {
@@ -32,7 +40,16 @@ impl PollRuntime {
             failure_backoff_secs: Mutex::new(0),
             rate_limit_until: Mutex::new(None),
             gh_token_cache: Mutex::new(None),
+            last_poll_cost: Mutex::new(0),
+            brake_slow_interval: Mutex::new(0),
+            last_rate_remaining: Mutex::new(None),
+            last_rate_reset_at: Mutex::new(None),
+            idle_pause_active: AtomicBool::new(false),
         }
+    }
+
+    pub fn is_idle_paused(&self) -> bool {
+        self.idle_pause_active.load(Ordering::SeqCst)
     }
 }
 
@@ -40,7 +57,8 @@ fn apply_jitter(base_secs: u64) -> u64 {
     if base_secs == 0 {
         return 0;
     }
-    let jitter = (Utc::now().timestamp_subsec_nanos() as u64) % (base_secs / 4 + 1);
+    let nanos = Utc::now().timestamp_subsec_nanos();
+    let jitter = (nanos as u64) % (base_secs / 4 + 1);
     base_secs + jitter
 }
 
@@ -57,7 +75,12 @@ fn rate_limit_wait_secs(runtime: &PollRuntime) -> u64 {
     }
 }
 
-fn set_rate_limit_until(runtime: &PollRuntime, retry_after_secs: Option<u64>, reset_at: Option<&str>) {
+fn set_rate_limit_until(
+    runtime: &PollRuntime,
+    retry_after_secs: Option<u64>,
+    reset_at: Option<&str>,
+    nanos: u32,
+) {
     let until = if let Some(secs) = retry_after_secs {
         Utc::now() + chrono::Duration::seconds(secs as i64)
     } else if let Some(reset) = reset_at {
@@ -67,15 +90,14 @@ fn set_rate_limit_until(runtime: &PollRuntime, retry_after_secs: Option<u64>, re
     } else {
         Utc::now() + chrono::Duration::minutes(5)
     };
+    let extra = 1 + (nanos as u64 % 5);
+    let until = until + chrono::Duration::seconds(extra);
     if let Ok(mut guard) = runtime.rate_limit_until.lock() {
         *guard = Some(until);
     }
 }
 
-async fn sleep_until_deadline(
-    runtime: &Arc<PollRuntime>,
-    deadline: DateTime<Utc>,
-) -> bool {
+async fn sleep_until_deadline(runtime: &Arc<PollRuntime>, deadline: DateTime<Utc>) -> bool {
     while Utc::now() < deadline {
         let remaining = (deadline - Utc::now()).num_seconds().max(1) as u64;
         let slice = remaining.min(5);
@@ -87,12 +109,50 @@ async fn sleep_until_deadline(
     false
 }
 
+enum IdleTransition {
+    None,
+    EnteredIdle,
+    ResumedFromIdle,
+}
+
+fn update_idle_pause<R: Runtime>(app: &AppHandle<R>, state: &Arc<AppState>) -> IdleTransition {
+    let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
+    if !config.pause_when_idle {
+        if state.poll_runtime.idle_pause_active.swap(false, Ordering::SeqCst) {
+            #[cfg(target_os = "macos")]
+            tray::sync_tray_from_app(app);
+        }
+        return IdleTransition::None;
+    }
+    if is_polling_paused(&config.poll_pause) {
+        return IdleTransition::None;
+    }
+    let idle_secs = idle::seconds_since_last_input();
+    if idle_secs >= config.idle_pause_after_seconds as f64 {
+        let was = state.poll_runtime.idle_pause_active.swap(true, Ordering::SeqCst);
+        if !was {
+            #[cfg(target_os = "macos")]
+            tray::sync_tray_paused_with_tooltip(app, "Polling paused while idle");
+            return IdleTransition::EnteredIdle;
+        }
+        return IdleTransition::None;
+    }
+    if state.poll_runtime.idle_pause_active.swap(false, Ordering::SeqCst) {
+        #[cfg(target_os = "macos")]
+        tray::sync_tray_from_app(app);
+        return IdleTransition::ResumedFromIdle;
+    }
+    IdleTransition::None
+}
+
 pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<PollRuntime>) {
     tauri::async_runtime::spawn(async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(60))
             .build()
             .expect("http client");
+
+        let mut last_loop_wall = Utc::now();
 
         loop {
             let interval_secs = {
@@ -103,12 +163,7 @@ pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<
                     .unwrap_or(30)
             };
 
-            let extra_backoff = runtime
-                .failure_backoff_secs
-                .lock()
-                .map(|g| *g)
-                .unwrap_or(0);
-            let rate_wait = rate_limit_wait_secs(&runtime);
+            let idle_transition = update_idle_pause(&app, &state);
 
             if !state.fixture_mode {
                 let mut resumed_from_timed_pause = false;
@@ -122,29 +177,84 @@ pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<
                     }
                 }
 
-                let paused = state
+                let user_paused = state
                     .config
                     .lock()
                     .map(|c| is_polling_paused(&c.poll_pause))
                     .unwrap_or(false);
-                if !paused {
-                    if resumed_from_timed_pause {
+                let idle_paused = state.poll_runtime.is_idle_paused();
+
+                if !user_paused && !idle_paused {
+                    if resumed_from_timed_pause || idle_transition == IdleTransition::ResumedFromIdle {
                         let _ = run_poll_cycle(&app, &state, &client, true).await;
                     } else {
                         let _ = run_poll_cycle(&app, &state, &client, false).await;
                     }
-                } else {
+                } else if user_paused || idle_paused {
                     #[cfg(target_os = "macos")]
                     tray::sync_tray_paused(&app, true);
                 }
             }
 
-            let paused = state
+            let user_paused = state
                 .config
                 .lock()
                 .map(|c| is_polling_paused(&c.poll_pause))
                 .unwrap_or(false);
-            let sleep_secs = if paused {
+            let idle_paused = state.poll_runtime.is_idle_paused();
+
+            let brake_slow = state
+                .poll_runtime
+                .brake_slow_interval
+                .lock()
+                .map(|g| *g)
+                .unwrap_or(0);
+            let last_cost = state
+                .poll_runtime
+                .last_poll_cost
+                .lock()
+                .map(|g| *g)
+                .unwrap_or(0);
+            let rate_remaining = state
+                .poll_runtime
+                .last_rate_remaining
+                .lock()
+                .ok()
+                .and_then(|g| *g);
+            let rate_reset = state
+                .poll_runtime
+                .last_rate_reset_at
+                .lock()
+                .ok()
+                .and_then(|g| g.clone());
+
+            let brakes = apply_brakes(
+                interval_secs,
+                last_cost,
+                rate_remaining,
+                rate_reset.as_deref(),
+                brake_slow,
+            );
+            if brakes.log_high_cost {
+                log::warn!("GraphQL poll cost {last_cost} exceeded warning threshold");
+            }
+            if let Some(banner) = brakes.banner {
+                if rate_remaining.map_or(false, |r| r < LOW_REMAINING_STOP) {
+                    state.set_banner(Some(banner));
+                } else if state.banner.lock().map(|g| g.is_none()).unwrap_or(true) {
+                    state.set_banner(Some(banner));
+                }
+            }
+
+            let extra_backoff = state
+                .poll_runtime
+                .failure_backoff_secs
+                .lock()
+                .map(|g| *g)
+                .unwrap_or(0);
+            let rate_wait = rate_limit_wait_secs(&state.poll_runtime);
+
+            let sleep_secs = if user_paused || idle_paused {
                 state
                     .config
                     .lock()
@@ -152,11 +262,18 @@ pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<
                     .and_then(|c| seconds_until_timed_resume(&c.poll_pause))
                     .unwrap_or(interval_secs)
             } else {
-                interval_secs.max(extra_backoff).max(rate_wait)
+                brakes.sleep_secs.max(extra_backoff).max(rate_wait)
             };
             let sleep_secs = apply_jitter(sleep_secs);
             let deadline = Utc::now() + chrono::Duration::seconds(sleep_secs as i64);
             let _ = sleep_until_deadline(&runtime, deadline).await;
+
+            let gap = (Utc::now() - last_loop_wall).num_seconds();
+            last_loop_wall = Utc::now();
+            #[cfg(not(target_os = "macos"))]
+            if gap > (interval_secs * 2).max(90) {
+                crate::power::handle_system_wake(&app, &state);
+            }
         }
     });
 }
@@ -171,12 +288,12 @@ pub async fn run_poll_cycle<R: Runtime>(
         return Ok(());
     }
 
-    let paused = state
+    let user_paused = state
         .config
         .lock()
         .map(|c| is_polling_paused(&c.poll_pause))
         .unwrap_or(false);
-    if paused && !force {
+    if (user_paused || state.poll_runtime.is_idle_paused()) && !force {
         return Ok(());
     }
 
@@ -209,6 +326,43 @@ pub async fn run_poll_cycle<R: Runtime>(
             Err(None) => return Ok(()),
         };
 
+        let last_fetched = state
+            .dashboard
+            .lock()
+            .map(|d| d.fetched_at.clone())
+            .unwrap_or_default();
+
+        if config.use_etag_probe {
+            let mut skip_all = true;
+            let mut combined_banner = None;
+            for org in &config.orgs {
+                let probe = evaluate_probe(
+                    client,
+                    &token,
+                    &config,
+                    org,
+                    &state.etag_store,
+                    &last_fetched,
+                )
+                .await?;
+                if !probe.skip_graphql {
+                    skip_all = false;
+                    break;
+                }
+                combined_banner = probe.banner.or(combined_banner);
+            }
+            if skip_all && !config.orgs.is_empty() {
+                if let Some(msg) = combined_banner {
+                    state.set_banner(Some(msg));
+                }
+                if let Ok(mut guard) = state.dashboard.lock() {
+                    guard.stale = true;
+                }
+                let _ = app.emit("dashboard-updated", ());
+                return Ok(());
+            }
+        }
+
         let fetch = fetch_all_orgs(client, &token, &config)
             .await
             .map_err(|e| match e {
@@ -236,14 +390,33 @@ pub async fn run_poll_cycle<R: Runtime>(
                     reset_at,
                     message,
                 } => {
-                    set_rate_limit_until(
-                        &state.poll_runtime,
+                    let nanos = Utc::now().timestamp_subsec_nanos();
+                    let kind = if retry_after_secs.is_some() {
+                        FailureKind::SecondaryRateLimit
+                    } else {
+                        FailureKind::PrimaryRateLimit
+                    };
+                    let wait = wait_seconds_for_failure(
+                        kind,
+                        state
+                            .poll_runtime
+                            .failure_backoff_secs
+                            .lock()
+                            .map(|g| *g)
+                            .unwrap_or(0),
                         retry_after_secs,
                         reset_at.as_deref(),
+                        nanos,
                     );
-                    state.set_banner(Some(format!(
-                        "GitHub rate limit. Will retry after the reset window."
-                    )));
+                    set_rate_limit_until(
+                        &state.poll_runtime,
+                        Some(wait),
+                        reset_at.as_deref(),
+                        nanos,
+                    );
+                    state.set_banner(Some(
+                        "GitHub rate limit. Will retry after the reset window.".to_string(),
+                    ));
                     log::warn!("rate limited: {message}");
                     "rate_limited".to_string()
                 }
@@ -298,23 +471,22 @@ pub async fn run_poll_cycle<R: Runtime>(
         }
 
         if let Some(rl) = fetch.rate_limit {
-            if rl.remaining < 100 {
-                set_rate_limit_until(
-                    &state.poll_runtime,
-                    None,
-                    Some(rl.reset_at.as_str()),
-                );
-                state.set_banner(Some(format!(
-                    "GraphQL budget very low ({} remaining until {}). Polling pauses until reset.",
-                    rl.remaining,
-                    rl.reset_at
-                )));
-            } else if rl.remaining < 500 {
-                state.set_banner(Some(format!(
-                    "GraphQL budget low ({} remaining until {})",
-                    rl.remaining,
-                    rl.reset_at
-                )));
+            if let Ok(mut guard) = state.poll_runtime.last_poll_cost.lock() {
+                *guard = rl.cost;
+            }
+            if let Ok(mut guard) = state.poll_runtime.last_rate_remaining.lock() {
+                *guard = Some(rl.remaining);
+            }
+            if let Ok(mut guard) = state.poll_runtime.last_rate_reset_at.lock() {
+                *guard = Some(rl.reset_at.clone());
+            }
+            let slow = brake_slow_interval_for_cost(rl.cost, config.poll_interval_seconds);
+            if let Ok(mut guard) = state.poll_runtime.brake_slow_interval.lock() {
+                *guard = slow;
+            }
+            if rl.remaining < LOW_REMAINING_STOP {
+                let nanos = Utc::now().timestamp_subsec_nanos();
+                set_rate_limit_until(&state.poll_runtime, None, Some(rl.reset_at.as_str()), nanos);
             }
         }
 
@@ -335,13 +507,21 @@ pub async fn run_poll_cycle<R: Runtime>(
         Err(msg) => {
             if msg != "unauthorized" && msg != "forbidden" && msg != "rate_limited" {
                 log::warn!("poll failed: {msg}");
+                let nanos = Utc::now().timestamp_subsec_nanos();
+                let wait = wait_seconds_for_failure(
+                    FailureKind::TransientHttp,
+                    state
+                        .poll_runtime
+                        .failure_backoff_secs
+                        .lock()
+                        .map(|g| *g)
+                        .unwrap_or(0),
+                    None,
+                    None,
+                    nanos,
+                );
                 if let Ok(mut guard) = state.poll_runtime.failure_backoff_secs.lock() {
-                    let next = if *guard == 0 {
-                        30
-                    } else {
-                        (*guard * 2).min(300)
-                    };
-                    *guard = apply_jitter(next);
+                    *guard = wait;
                 }
             }
             Err(msg)

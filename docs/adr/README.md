@@ -9,3 +9,4 @@ Accepted decisions for Agent Dashboard. Bryan approved `docs/PLAN.md`; where ope
 | [0003](0003-graphql-polling-and-interval.md) | GraphQL org search, `statusCheckRollup`, 30s default interval |
 | [0004](0004-status-group-precedence.md) | Status groups and precedence |
 | [0005](0005-offline-fixture-flag.md) | Offline demo via `--fixture` CLI flag |
+| [0006](0006-poll-hardening-phase-4.md) | Wake, idle pause, ETag probe, brakes/backoff |

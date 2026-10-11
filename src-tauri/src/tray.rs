@@ -17,10 +17,23 @@ use crate::state::AppState;
 
 fn tray_pause_info<R: Runtime>(app: &tauri::AppHandle<R>) -> (bool, String) {
     if let Some(state) = app.try_state::<Arc<AppState>>() {
-        if let Ok(guard) = state.config.lock() {
-            let paused = is_polling_paused(&guard.poll_pause);
-            return (paused, pause_tooltip(&guard.poll_pause));
-        }
+        let user_paused = state
+            .config
+            .lock()
+            .map(|guard| is_polling_paused(&guard.poll_pause))
+            .unwrap_or(false);
+        let idle_paused = state.poll_runtime.is_idle_paused();
+        let paused = user_paused || idle_paused;
+        let tip = if idle_paused && !user_paused {
+            "Polling paused while idle".to_string()
+        } else {
+            state
+                .config
+                .lock()
+                .map(|guard| pause_tooltip(&guard.poll_pause))
+                .unwrap_or_else(|_| "Polling paused".to_string())
+        };
+        return (paused, tip);
     }
     (false, "Polling".to_string())
 }
@@ -213,6 +226,15 @@ pub fn sync_tray_from_snapshot<R: Runtime>(app: &tauri::AppHandle<R>, snapshot: 
             });
             let _ = tray.set_tooltip(Some(snapshot.tray_tooltip.clone()));
         }
+    }
+}
+
+pub fn sync_tray_paused_with_tooltip<R: Runtime>(app: &tauri::AppHandle<R>, tooltip: &str) {
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let _ = tray.set_icon(Some(ICON_PAUSED.clone()));
+        let _ = tray.set_icon_as_template(true);
+        let _ = tray.set_title(Some("Paused"));
+        let _ = tray.set_tooltip(Some(tooltip.to_string()));
     }
 }
 

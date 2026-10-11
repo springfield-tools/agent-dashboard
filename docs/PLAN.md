@@ -208,31 +208,31 @@ Repo names for the probe come from the config include list. When include is empt
 
 ### Rate-limit budget
 
-Measured on 2026-10-10: the search above, first 50 nodes, cost 2 GraphQL points. Primary GraphQL limit on a user token is 5,000 points per hour. REST core is also 5,000 per hour. REST search is a separate budget of 30 requests per minute; this design does not use it. Authenticated requests are required. Unauthenticated GraphQL is 60 points per hour, which cannot sustain even the slowest allowed interval.
+Measured on 2026-10-11: one live **`organization.repositories`** page for `springfield-ham-radio` (12 repos, 33 open PRs/issues in one tick) cost **14** GraphQL points. Primary GraphQL limit on a user token is 5,000 points per hour. REST core is also 5,000 per hour. REST search is a separate budget of 30 requests per minute; this design does not use it. Authenticated requests are required. Unauthenticated GraphQL is 60 points per hour, which cannot sustain even the slowest allowed interval.
 
-Points per hour for one page:
+Points per hour for one org page:
 
-`orgs × cost_per_query × (3600 / poll_interval_seconds)`
+`cost_per_tick × (3600 / poll_interval_seconds)`
 
-A second page in the same tick doubles that org's cost. The measured cost is 2 points per org. The headroom column uses 10 points per org, for extra fields or a second page.
+A second repo page in the same tick doubles that org's cost. The measured cost is **14** points for today's ham-radio org. The headroom column uses **20** points per tick, for more repos, heavier rollups, or a second page.
 
-| Interval | Ticks per hour | 1 org at 2 pts | Share of 5,000 | 1 org at 10 pts | Share of 5,000 | N orgs at 2 pts | N orgs at 10 pts |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 15s | 240 | 480 | 9.6% | 2,400 | 48% | 480 × N | 2,400 × N |
-| 30s (default) | 120 | 240 | 4.8% | 1,200 | 24% | 240 × N | 1,200 × N |
-| 60s | 60 | 120 | 2.4% | 600 | 12% | 120 × N | 600 × N |
-| 120s | 30 | 60 | 1.2% | 300 | 6% | 60 × N | 300 × N |
+| Interval | Ticks per hour | 14 pts/tick | Share of 5,000 | 20 pts/tick | Share of 5,000 |
+| --- | --- | --- | --- | --- | --- |
+| 15s | 240 | 3,360 | 67.2% | 4,800 | 96.0% |
+| 30s (default) | 120 | 1,680 | 33.6% | 2,400 | 48.0% |
+| 60s | 60 | 840 | 16.8% | 1,200 | 24.0% |
+| 120s | 30 | 420 | 8.4% | 600 | 12.0% |
 
-How many orgs fit under 5,000 points at one page:
+How many orgs fit under 5,000 points at one page each (multiply the per-tick cost by org count):
 
-| Interval | Orgs at the measured 2 points | Orgs at the 10-point headroom |
+| Interval | Orgs at 14 pts/tick | Orgs at 20 pts/tick (headroom) |
 | --- | --- | --- |
-| 15s | 10 (4,800). An 11th org crosses the limit | 2 (4,800). A 3rd org crosses the limit |
-| 30s | 20 (4,800). A 21st org crosses the limit | 4 (4,800). A 5th org crosses the limit |
-| 60s | 41 (4,920). A 42nd org crosses the limit | 8 (4,800). A 9th org crosses the limit |
-| 120s | 83 (4,980). An 84th org crosses the limit | 16 (4,800). A 17th org crosses the limit |
+| 15s | 1 (3,360). A 2nd org crosses the limit | 1 (4,800). A 2nd org crosses the limit |
+| 30s | 2 (3,360). A 3rd org crosses the limit | 2 (4,800). A 3rd org crosses the limit |
+| 60s | 5 (4,200). A 6th org crosses the limit | 4 (4,800). A 5th org crosses the limit |
+| 120s | 11 (4,620). A 12th org crosses the limit | 8 (4,800). A 9th org crosses the limit |
 
-The default, one org at 30 seconds and the measured cost, is 240 points per hour (4.8%). Two orgs at that default are 480 points (9.6%). Several thousand points remain for `gh` on the same token. The app reads `rateLimit` on every GraphQL response and `X-RateLimit-Remaining` / `X-RateLimit-Reset` on every REST response.
+The default, one org at 30 seconds and the measured 14-point cost, is **1,680** points per hour (33.6%). The automatic brake slows the live interval when `cost × (3600 / poll_interval_seconds) > 2,500` (for example 14 points at 15 seconds projects 3,360/hr and slows to about 21 seconds). Several thousand points remain for `gh` on the same token. The app reads `rateLimit` on every GraphQL response and `X-RateLimit-Remaining` / `X-RateLimit-Reset` on every REST response.
 
 The REST ETag probe, when enabled, is one call per repo per tick and spends no primary points on a 304. At 12 repos that is 48 calls per minute at 15 seconds, 24 at 30 seconds, 12 at 60 seconds, and 6 at 120 seconds. All of those sit under the rough secondary ceiling of about 90 requests per minute. The poller never runs a second poll concurrently. One GraphQL request in flight at a time. A 200 from the probe costs 1 core point for that repo.
 

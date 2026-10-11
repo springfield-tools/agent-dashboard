@@ -14,6 +14,7 @@
         <template v-if="configStatus?.fixtureMode">Fixture ·</template>
         <template v-else-if="configStatus?.pollingPaused">Paused ·</template>
         updated {{ fetchedLabel }}
+        <template v-if="snapshot?.stale"> · CI may be stale</template>
         <template v-if="configStatus"> · every {{ intervalLabel }}</template>
       </span>
       <p v-if="configStatus?.configError" class="banner banner-error">
