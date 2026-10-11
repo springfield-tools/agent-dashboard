@@ -476,7 +476,6 @@ mod tests {
         let owner = "o";
         let repo = "r";
         let number = 5u32;
-        let issue_path = format!("/repos/{owner}/{repo}/issues/{number}");
 
         let client = Client::builder().build().unwrap();
         let token = "tok";
@@ -520,8 +519,10 @@ mod tests {
             when.method(POST).path("/repos/o/r/issues/5/labels");
             then.status(200);
         });
-        let write_labels_to_add = write_add.clone();
-        let write_labels_to_remove = write_remove.clone();
+        let write_labels_to_add = vec!["ready-to-merge".to_string()];
+        let write_labels_to_remove = vec!["needs-testing".to_string()];
+        assert_eq!(write_labels_to_add, write_add);
+        assert_eq!(write_labels_to_remove, write_remove);
         apply_label_diff_at(
             &client,
             &base,
