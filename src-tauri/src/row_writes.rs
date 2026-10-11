@@ -155,7 +155,7 @@ async fn execute_inner(
             let label_result = apply_label_diff(
                 client,
                 &token,
-                owner,
+                &row.org,
                 &row.repo,
                 row.number,
                 &to_add,
@@ -290,7 +290,6 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
         .user_agent("agent-dashboard")
         .build()
         .map_err(|e| e.to_string())?;
-    let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
     let token = github_token(state_ref)?;
 
     let partial = {
