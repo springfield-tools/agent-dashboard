@@ -80,8 +80,11 @@ export type OrgAuthStatus = {
   ready: boolean;
 };
 
+export type ItemKindFilter = 'all' | 'issue' | 'pr';
+
 export type UiState = {
   orgCollapsed: Record<string, boolean>;
+  itemKindFilter?: ItemKindFilter;
 };
 
 export type ConfigStatus = {

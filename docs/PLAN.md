@@ -686,7 +686,7 @@ There is no documented `@cursor stop`. Undo does not send `autofix off`.
 
 ### Phase 5.1 — Color and multi-org
 
-**Scope.** Tinted row chips (issue/PR, status labels, CI, label diffs) with readable contrast in light and dark mode. Slightly darker row cards vs the popover background. Default config lists `springfield-ham-radio`, `springfield-tools`, and `springfield-usa`. Popover groups by org in collapsible sections (per-org tray-style counts on the header, status groups inside). Persist org expanded/collapsed in `ui-state.json`. Per-org `credential` on `[[orgs]]` with Keychain account `github-token-{org}`; migrate legacy `github-token` to `springfield-ham-radio`. Settings shows per-org token save/remove and auth readiness. Per-org auth banners when a token is missing or rejected; tray totals stay global. Row writes and GraphQL budget math use each org's credential bucket. ADR [0008](adr/0008-multi-org-credentials-and-grouping.md).
+**Scope.** Tinted row chips (issue/PR, status labels, CI, label diffs) with readable contrast in light and dark mode. Slightly darker row cards vs the popover background. Default config lists `springfield-ham-radio`, `springfield-tools`, and `springfield-usa`. Popover groups by org in collapsible sections (per-org tray-style counts on the header, status groups inside). Persist org expanded/collapsed in `ui-state.json`. A segmented control in the popover header (All / Issues / PRs) filters visible rows and recomputes org and group counts; the menu-bar tray title stays unfiltered. The choice persists in `ui-state.json`. The collapsed Dependabot footer hides when Issues is selected. Per-org `credential` on `[[orgs]]` with Keychain account `github-token-{org}`; migrate legacy `github-token` to `springfield-ham-radio`. Settings shows per-org token save/remove and auth readiness. Per-org auth banners when a token is missing or rejected; tray totals stay global. Row writes and GraphQL budget math use each org's credential bucket. ADR [0008](adr/0008-multi-org-credentials-and-grouping.md).
 
 **Acceptance.**
 
@@ -695,6 +695,7 @@ There is no documented `@cursor stop`. Undo does not send `autofix off`.
 - `springfield-tools` and `springfield-usa` poll when each has a PAT or `credential = "gh"`.
 - Footer lists GraphQL pts/poll and remaining per credential key when multiple buckets were used.
 - Org collapse state survives quit and relaunch.
+- Type filter All / Issues / PRs updates row lists and section counts; tray title unchanged; Dependabot footer hidden on Issues; filter survives relaunch.
 
 **Bryan tests.**
 

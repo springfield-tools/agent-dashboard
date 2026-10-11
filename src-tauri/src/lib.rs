@@ -32,7 +32,9 @@ use crate::credential::{
     credential_is_ready, credential_source_label, org_credential_is_ready, org_credential_source_label,
 };
 use crate::keychain::{delete_token_for_org, store_token_for_org};
-use crate::ui_state::{load_ui_state, save_ui_state, set_org_collapsed, UiState};
+use crate::ui_state::{
+    load_ui_state, save_ui_state, set_item_kind_filter, set_org_collapsed, UiState,
+};
 use crate::model::DashboardSnapshot;
 use crate::pause::{
     is_polling_paused, pause_for_one_hour_value, pause_manual_value,
@@ -176,6 +178,17 @@ fn set_org_section_collapsed(
 }
 
 #[tauri::command]
+fn set_item_kind_filter_cmd(
+    state: tauri::State<'_, Arc<AppState>>,
+    filter: String,
+) -> Result<(), String> {
+    let mut guard = state.ui_state.lock().map_err(|_| "ui state lock")?;
+    set_item_kind_filter(&mut *guard, &filter)?;
+    save_ui_state(&state.ui_state_path, &*guard)?;
+    Ok(())
+}
+
+#[tauri::command]
 fn set_poll_interval(
     state: tauri::State<'_, Arc<AppState>>,
     seconds: u64,
@@ -307,6 +320,7 @@ pub fn run(fixture_mode: bool) {
             write_ui_state_cmd,
             ui_state_cmd,
             set_org_section_collapsed,
+            set_item_kind_filter_cmd,
         ]);
 
     builder = builder.setup(move |app| {

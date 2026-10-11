@@ -32,7 +32,22 @@
       <p v-else-if="actionBanner" class="banner banner-warn">{{ actionBanner }}</p>
       <p v-else-if="configStatus?.banner" class="banner banner-warn">{{ configStatus.banner }}</p>
       <p v-if="writeUi?.toast" class="banner banner-info">{{ writeUi.toast }}</p>
-      <div v-if="!configStatus?.fixtureMode" class="controls">
+      <div class="controls">
+        <div class="segmented" role="tablist" aria-label="Item type">
+          <button
+            v-for="opt in ITEM_KIND_FILTER_OPTIONS"
+            :key="opt.value"
+            type="button"
+            class="segmented-item"
+            role="tab"
+            :aria-selected="itemKindFilter === opt.value"
+            :class="{ active: itemKindFilter === opt.value }"
+            @click="onItemKindFilterChange(opt.value)"
+          >
+            {{ opt.label }}
+          </button>
+        </div>
+        <template v-if="!configStatus?.fixtureMode">
         <label class="control-label">
           Poll
           <select
@@ -57,6 +72,7 @@
           <button type="button" class="btn-text" @click="onPause('manual')">Pause</button>
           <button type="button" class="btn-text" @click="onPause('hour')">1h</button>
           <button type="button" class="btn-text" @click="onPause('tomorrow')">Until midnight</button>
+        </template>
         </template>
       </div>
     </header>
@@ -135,7 +151,7 @@
         </details>
       </template>
       <template v-else>
-        <section v-for="group in snapshot?.groups ?? []" :key="group.id" class="section">
+        <section v-for="group in filteredGroups" :key="group.id" class="section">
           <h2 class="section-title">{{ group.title }} · {{ group.items.length }}</h2>
           <div
             v-for="row in group.items"
@@ -184,7 +200,7 @@
           </div>
         </section>
       </template>
-      <p v-if="!orgSections.length && !snapshot?.groups.length" class="empty">No open items in this view.</p>
+      <p v-if="!orgSections.length && !filteredGroups.length" class="empty">No open items in this view.</p>
     </main>
     <div v-if="writeUi?.undoAvailable" class="undo-bar">
       <button type="button" class="btn-text" @click="onUndo">Undo last action</button>
@@ -331,7 +347,7 @@
 
     <footer class="footer">
       <button
-        v-if="snapshot?.bots"
+        v-if="showBotFooter"
         type="button"
         class="bot-summary"
         @click="openRow(snapshot.bots.searchUrl)"
@@ -427,6 +443,11 @@ import { listen } from '@tauri-apps/api/event';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 
 import { chipClass, kindChipClass } from './chipVariants';
+import {
+  filterDashboardView,
+  parseItemKindFilter,
+  type ItemKindFilter,
+} from './typeFilter';
 import { formatRelativeTime } from './formatRelative';
 import {
   computeContextMenuPosition,
@@ -445,6 +466,12 @@ import {
   type UiState,
   type WriteUiState,
 } from './types/dashboard';
+
+const ITEM_KIND_FILTER_OPTIONS: { label: string; value: ItemKindFilter }[] = [
+  { label: 'All', value: 'all' },
+  { label: 'Issues', value: 'issue' },
+  { label: 'PRs', value: 'pr' },
+];
 
 const snapshot = ref<DashboardSnapshot | null>(null);
 const configStatus = ref<ConfigStatus | null>(null);
@@ -518,13 +545,33 @@ const missingOrgsToml = computed(() =>
     .join('\n\n'),
 );
 
-const orgSections = computed((): DashboardOrgSection[] => {
-  const sections = snapshot.value?.orgSections;
-  if (sections && sections.length > 0) {
-    return sections;
+const itemKindFilter = computed(() => parseItemKindFilter(uiState.value.itemKindFilter));
+
+const filteredView = computed(() => {
+  if (!snapshot.value) {
+    return { orgSections: [] as DashboardOrgSection[], groups: [], showBots: false };
   }
-  return [];
+  return filterDashboardView(snapshot.value, itemKindFilter.value);
 });
+
+const useOrgLayout = computed(() => (snapshot.value?.orgSections?.length ?? 0) > 0);
+
+const orgSections = computed(() =>
+  useOrgLayout.value ? filteredView.value.orgSections : [],
+);
+
+const filteredGroups = computed(() =>
+  useOrgLayout.value ? [] : filteredView.value.groups,
+);
+
+const showBotFooter = computed(
+  () => filteredView.value.showBots && Boolean(snapshot.value?.bots),
+);
+
+function onItemKindFilterChange(filter: ItemKindFilter): void {
+  uiState.value = { ...uiState.value, itemKindFilter: filter };
+  void invoke('set_item_kind_filter_cmd', { filter });
+}
 
 function isOrgCollapsed(org: string): boolean {
   return uiState.value.orgCollapsed[org] === true;
