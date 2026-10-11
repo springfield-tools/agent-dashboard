@@ -25,8 +25,6 @@ const KNOWN_ROOT_KEYS: [&str; 11] = [
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    #[error("failed to read config: {0}")]
-    Io(String),
     #[error("invalid TOML: {0}")]
     Parse(String),
     #[error("poll_interval_seconds must be between {min} and {max}, got {value}")]

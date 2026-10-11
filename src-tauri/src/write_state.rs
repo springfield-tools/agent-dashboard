@@ -4,9 +4,8 @@ use std::time::{Duration, Instant};
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 
-use crate::config::LabelsConfig;
 use crate::model::{build_dashboard_simple, DashboardRow, DashboardSnapshot, RawItem};
-use crate::row_actions::{comment_starts_with_cursor, RowActionKind};
+use crate::row_actions::comment_starts_with_cursor;
 
 pub const UNDO_WINDOW_SECS: u64 = 60;
 
@@ -287,15 +286,6 @@ pub fn labels_after_diff(current: &[String], to_add: &[String], to_remove: &[Str
         set.insert(a.clone());
     }
     set.into_iter().collect()
-}
-
-pub fn status_label_names(labels: &LabelsConfig) -> Vec<String> {
-    vec![
-        labels.needs_input.clone(),
-        labels.needs_testing.clone(),
-        labels.ready_to_merge.clone(),
-        labels.agent_working.clone(),
-    ]
 }
 
 pub fn make_undo_record(

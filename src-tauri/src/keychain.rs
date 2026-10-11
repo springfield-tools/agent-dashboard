@@ -133,20 +133,3 @@ fn has_token_for_account(account: &str) -> Result<bool, KeychainError> {
         .map(|t| !t.is_empty())
         .unwrap_or(false))
 }
-
-/// Backward-compatible helpers (default org).
-pub fn store_token(token: &str) -> Result<(), KeychainError> {
-    store_token_for_org("springfield-ham-radio", token)
-}
-
-pub fn load_token() -> Result<Option<String>, KeychainError> {
-    load_token_for_org("springfield-ham-radio")
-}
-
-pub fn delete_token() -> Result<(), KeychainError> {
-    delete_token_for_org("springfield-ham-radio")
-}
-
-pub fn has_token() -> bool {
-    has_token_for_org("springfield-ham-radio")
-}

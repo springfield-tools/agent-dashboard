@@ -1,8 +1,6 @@
 use reqwest::Client;
 use serde::Deserialize;
 
-use crate::row_actions::COMMENT_FOOTER;
-
 const USER_AGENT: &str = "agent-dashboard";
 const GITHUB_API: &str = "https://api.github.com";
 
@@ -148,17 +146,6 @@ pub async fn delete_issue_comment_at(
     Ok(())
 }
 
-pub async fn add_labels(
-    client: &Client,
-    token: &str,
-    owner: &str,
-    repo: &str,
-    number: u32,
-    names: &[String],
-) -> Result<(), RestWriteError> {
-    add_labels_at(client, GITHUB_API, token, owner, repo, number, names).await
-}
-
 pub async fn add_labels_at(
     client: &Client,
     api_base: &str,
@@ -185,17 +172,6 @@ pub async fn add_labels_at(
         return Err(classify(status, &text));
     }
     Ok(())
-}
-
-pub async fn remove_label(
-    client: &Client,
-    token: &str,
-    owner: &str,
-    repo: &str,
-    number: u32,
-    name: &str,
-) -> Result<(), RestWriteError> {
-    remove_label_at(client, GITHUB_API, token, owner, repo, number, name).await
 }
 
 pub async fn remove_label_at(
@@ -278,31 +254,6 @@ pub async fn apply_undo_label_diff_at(
     .await
 }
 
-/// Undo restores labels to `previous`; only status-label mutations are reversed via diff from `current`.
-pub async fn restore_labels(
-    client: &Client,
-    token: &str,
-    owner: &str,
-    repo: &str,
-    number: u32,
-    current: &[String],
-    previous: &[String],
-    status_names: &[String],
-) -> Result<(), RestWriteError> {
-    let mut to_remove = Vec::new();
-    let mut to_add = Vec::new();
-    for name in status_names {
-        let had = previous.iter().any(|l| l == name);
-        let has = current.iter().any(|l| l == name);
-        if had && !has {
-            to_add.push(name.clone());
-        } else if !had && has {
-            to_remove.push(name.clone());
-        }
-    }
-    apply_label_diff(client, token, owner, repo, number, &to_add, &to_remove).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,7 +261,7 @@ mod tests {
 
     #[test]
     fn footer_constant_matches_row_actions() {
-        assert_eq!(COMMENT_FOOTER, "— Agent Dashboard");
+        assert_eq!(crate::row_actions::COMMENT_FOOTER, "— Agent Dashboard");
     }
 
     #[tokio::test]

@@ -83,4 +83,14 @@ mod tests {
         let until = primary_limit_wait_until_reset(&reset, 0).expect("parse");
         assert!(until > Utc::now() + chrono::Duration::minutes(9));
     }
+
+    #[test]
+    fn rate_limit_failure_kinds_return_positive_wait() {
+        let reset = (Utc::now() + chrono::Duration::minutes(5)).to_rfc3339();
+        let primary = wait_seconds_for_failure(FailureKind::PrimaryRateLimit, 0, None, Some(&reset), 0);
+        assert!(primary > 0);
+        let secondary =
+            wait_seconds_for_failure(FailureKind::SecondaryRateLimit, 0, Some(60), None, 0);
+        assert!(secondary >= 60);
+    }
 }

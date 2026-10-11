@@ -98,7 +98,6 @@ impl EtagStore {
 pub struct ProbeDecision {
     pub skip_graphql: bool,
     pub banner: Option<String>,
-    pub mark_stale: bool,
 }
 
 /// Mirrors the org probe loop in `poll.rs`: any error or non-skip result means run GraphQL.
@@ -139,7 +138,6 @@ pub async fn evaluate_probe(
         return Ok(ProbeDecision {
             skip_graphql: false,
             banner: None,
-            mark_stale: false,
         });
     }
 
@@ -148,7 +146,6 @@ pub async fn evaluate_probe(
         return Ok(ProbeDecision {
             skip_graphql: false,
             banner: None,
-            mark_stale: false,
         });
     }
 
@@ -198,14 +195,12 @@ pub async fn evaluate_probe(
         return Ok(ProbeDecision {
             skip_graphql: true,
             banner,
-            mark_stale: true,
         });
     }
 
     Ok(ProbeDecision {
         skip_graphql: false,
         banner: None,
-        mark_stale: false,
     })
 }
 
@@ -304,7 +299,6 @@ mod tests {
             &[Ok(ProbeDecision {
                 skip_graphql: false,
                 banner: None,
-                mark_stale: false,
             })],
         ));
     }
@@ -390,7 +384,6 @@ mod tests {
         .await
         .expect("probe");
         assert!(decision.skip_graphql);
-        assert!(decision.mark_stale);
     }
 
     #[test]
