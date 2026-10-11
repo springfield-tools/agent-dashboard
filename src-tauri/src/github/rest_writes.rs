@@ -532,27 +532,28 @@ mod tests {
 
         let write_remove_needs_testing = server.mock(|when, then| {
             when.method(DELETE)
-                .path(format!("{issue_path}/labels/needs-testing"));
+                .path("/repos/o/r/issues/5/labels/needs-testing");
             then.status(200);
         });
-        remove_label_at(&client, &base, token, owner, repo, number, "needs-testing")
-            .await
-            .expect("write remove needs-testing");
-        write_remove_needs_testing.assert();
-
         let write_add_ready = server.mock(|when, then| {
-            when.method(POST).path(format!("{issue_path}/labels"));
+            when.method(POST).path("/repos/o/r/issues/5/labels");
             then.status(200);
         });
-        let labels_url = format!("{base}{issue_path}/labels");
-        let add_res = client
-            .post(&labels_url)
-            .headers(auth_headers(token))
-            .json(&serde_json::json!(["ready-to-merge"]))
-            .send()
-            .await
-            .expect("write add ready-to-merge");
-        assert!(add_res.status().is_success());
+        let write_labels_to_add = write_add.clone();
+        let write_labels_to_remove = write_remove.clone();
+        apply_label_diff_at(
+            &client,
+            &base,
+            token,
+            owner,
+            repo,
+            number,
+            &write_labels_to_add,
+            &write_labels_to_remove,
+        )
+        .await
+        .expect("write label diff");
+        write_remove_needs_testing.assert();
         write_add_ready.assert();
 
         let undo = make_undo_record(
@@ -572,11 +573,11 @@ mod tests {
 
         let undo_remove_ready = server.mock(|when, then| {
             when.method(DELETE)
-                .path(format!("{issue_path}/labels/ready-to-merge"));
+                .path("/repos/o/r/issues/5/labels/ready-to-merge");
             then.status(200);
         });
         let undo_add_needs_testing = server.mock(|when, then| {
-            when.method(POST).path(format!("{issue_path}/labels"));
+            when.method(POST).path("/repos/o/r/issues/5/labels");
             then.status(200);
         });
         let undo_delete_comment = server.mock(|when, then| {
