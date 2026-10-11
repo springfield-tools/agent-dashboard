@@ -44,18 +44,20 @@ pub fn extract_repo_pr_indices_from_path(path: &[serde_json::Value]) -> Option<(
     while i + 2 < path.len() {
         if path[i].as_str() == Some("repositories")
             && path[i + 1].as_str() == Some("nodes")
-            && let Some(n) = path[i + 2].as_u64()
         {
-            repo_idx = Some(n as usize);
+            if let Some(n) = path[i + 2].as_u64() {
+                repo_idx = Some(n as usize);
+            }
         }
         if path[i].as_str() == Some("repository") {
             repo_idx = Some(0);
         }
         if path[i].as_str() == Some("pullRequests")
             && path[i + 1].as_str() == Some("nodes")
-            && let Some(n) = path[i + 2].as_u64()
         {
-            pr_idx = Some(n as usize);
+            if let Some(n) = path[i + 2].as_u64() {
+                pr_idx = Some(n as usize);
+            }
         }
         i += 1;
     }
