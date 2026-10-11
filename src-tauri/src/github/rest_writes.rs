@@ -230,30 +230,6 @@ pub async fn apply_label_diff_at(
     Ok(())
 }
 
-/// Inverse of a successful write label diff (undo).
-pub async fn apply_undo_label_diff_at(
-    client: &Client,
-    api_base: &str,
-    token: &str,
-    owner: &str,
-    repo: &str,
-    number: u32,
-    undo_labels_add: &[String],
-    undo_labels_remove: &[String],
-) -> Result<(), RestWriteError> {
-    apply_label_diff_at(
-        client,
-        api_base,
-        token,
-        owner,
-        repo,
-        number,
-        undo_labels_add,
-        undo_labels_remove,
-    )
-    .await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,7 +462,7 @@ mod tests {
         });
         let undo_to_add = undo.undo_labels_add.clone();
         let undo_to_remove = undo.undo_labels_remove.clone();
-        apply_undo_label_diff_at(
+        apply_label_diff_at(
             &undo_client,
             &undo_base,
             "tok",
