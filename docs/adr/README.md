@@ -8,3 +8,4 @@ Accepted decisions for Agent Dashboard. Bryan approved `docs/PLAN.md`; where ope
 | [0002](0002-github-auth-keychain-pat.md) | GitHub auth via fine-grained PAT in Keychain |
 | [0003](0003-graphql-polling-and-interval.md) | GraphQL org search, `statusCheckRollup`, 30s default interval |
 | [0004](0004-status-group-precedence.md) | Status groups and precedence |
+| [0005](0005-offline-fixture-flag.md) | Offline demo via `--fixture` CLI flag |

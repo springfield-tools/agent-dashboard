@@ -35,6 +35,7 @@ export type BotFooter = {
   green: number;
   noCi: number;
   failing: number;
+  pending: number;
   searchUrl: string;
 };
 
@@ -53,4 +54,19 @@ export type ConfigStatus = {
   configError: string | null;
   pollIntervalSeconds: number;
   botFilter: string;
+  fixtureMode: boolean;
+  pollingPaused: boolean;
+  pauseTooltip: string;
+  hasGithubToken: boolean;
+  credentialSource: string;
+  authError: string | null;
+  offline: boolean;
+  banner: string | null;
 };
+
+export const POLL_INTERVAL_PRESETS = [
+  { label: '15s', seconds: 15 },
+  { label: '30s', seconds: 30 },
+  { label: '1m', seconds: 60 },
+  { label: '2m', seconds: 120 },
+] as const;

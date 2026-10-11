@@ -13,7 +13,7 @@ Local checkouts, used in every setup and test step below:
 
 ## Recommendation
 
-Build a Tauri 2 macOS tray app. Rust owns polling, the keychain, and grouping. Vue 3 renders one popover. The first phases ship a fine-grained read-only personal access token in the macOS Keychain. A later phase adds issue and pull-request write so a row can change labels and post a comment. Poll with one GitHub GraphQL search per org. The interval is a setting in the config file and in the popover, default 30 seconds, allowed range 15 seconds to 15 minutes. Read CI from `statusCheckRollup`. Pause and resume from the tray menu or the popover, including "for 1 hour" and "until tomorrow". The icon shows a paused state while polling is stopped. Keep the bot filter configurable, defaulting to a collapsed Dependabot row that still surfaces failing bot PRs.
+Build a Tauri 2 macOS tray app. Rust owns polling, the keychain, and grouping. Vue 3 renders one popover. The first phases ship a fine-grained read-only personal access token in the macOS Keychain. A later phase adds issue and pull-request write so a row can change labels and post a comment. Poll with one GitHub GraphQL **organization.repositories** fetch per org (fine-grained PATs cannot rely on org search). The interval is a setting in the config file and in the popover, default 30 seconds, allowed range 15 seconds to 15 minutes. Read CI from `statusCheckRollup`. Pause and resume from the tray menu or the popover, including "for 1 hour" and "until tomorrow". The icon shows a paused state while polling is stopped. Keep the bot filter configurable, defaulting to a collapsed Dependabot row that still surfaces failing bot PRs.
 
 ## Snapshot of the data (2026-10-10)
 
@@ -139,7 +139,7 @@ Activate a row and the app opens `html_url` with the Tauri opener plugin (the sy
 
 ### Query
 
-One GraphQL search per configured org, every `poll_interval_seconds` (default 30, minimum 15, maximum 900), to `https://api.github.com/graphql`. The popover interval control writes that same key.
+One GraphQL **organization.repositories** query per configured org (paginated), every `poll_interval_seconds` (default 30, minimum 15, maximum 900), to `https://api.github.com/graphql`. Fine-grained PATs often cannot use `search(query: "org:…")` (HTTP 200 with errors and empty nodes); the app lists org repos and loads open pull requests and issues per repo instead. The popover interval control writes that same key.
 
 ```graphql
 query Dashboard($searchQuery: String!, $after: String) {
@@ -182,7 +182,7 @@ query Dashboard($searchQuery: String!, $after: String) {
 }
 ```
 
-Search string: `org:<name> is:open archived:false`. That returns issues and pull requests. Include and exclude lists are applied on the client after the response, so the query string stays stable when a repo is added and stays well under the 256-character search limit. A space in GitHub search is AND; listing twelve `repo:` qualifiers with `OR` is the fragile alternative.
+Live fetch uses `organization(login: <name>).repositories` with open `pullRequests` and `issues` per repo (not GraphQL search). Include and exclude lists are applied on the client per repository name; archived repos are skipped. Reference search string (OAuth/`gh` only): `org:<name> is:open archived:false`.
 
 `first: 100` covers today's 33 items in one page. When `pageInfo.hasNextPage` is true, the same poll follows `endCursor` until exhausted, then groups the combined set. There is no second timer tick in between.
 
@@ -363,7 +363,7 @@ A dev rebuild often changes the binary's code signature, and macOS will prompt o
 
 | | `gh auth token` | Fine-grained PAT | Device-flow OAuth app |
 | --- | --- | --- | --- |
-| Privilege | Whatever `gh` already has. Often `repo` plus the ability to push and admin | Read-only Issues, Pull requests, and Checks on the chosen org | Classic scopes only. Private repos mean the `repo` scope, which can push |
+| Privilege | Whatever `gh` already has. Often `repo` plus the ability to push and admin | Read-only Issues, Pull requests, and Commit statuses on the chosen org (no separate Checks permission on fine-grained PATs) | Classic scopes only. Private repos mean the `repo` scope, which can push |
 | Setup | Lowest if `gh` is already logged in. The app depends on the `gh` binary and on calling it every poll so a refreshed token is picked up | Create a token, paste it once, approve it for the org if the org requires that | Register an OAuth app, implement device flow and refresh, get the app approved for the org |
 | Org approval | Already done for `gh` | Required when the org gates fine-grained tokens. One owner approval | Required when the org gates OAuth apps |
 | Expiry | `gh`'s own refresh, or never, if a PAT was pasted into `gh` | Required, at most one year. A 401 means the popover asks for a new token | Access token about 8 hours. A refresh token must also live in the Keychain |
@@ -378,8 +378,8 @@ Token settings to document in the README:
 
 - Resource owner: `springfield-ham-radio` (add `springfield-tools` when that org is in the config)
 - Repository access: all repositories, so a new repo appears without a new token
-- Phases 1–4: Metadata Read (automatic), Issues Read, Pull requests Read, Checks Read
-- Phase 5: the same list, with Issues and Pull requests raised to Read and write. Checks stays Read. Contents stays off
+- Phases 1–4: Metadata Read (automatic), Issues Read, Pull requests Read, Commit statuses Read. Fine-grained PATs have no **Checks** permission; `statusCheckRollup.state` still works on public repos, but `CheckRun` names in rollup contexts may be empty until GitHub closes that gap (or use `credential = "gh"`).
+- Phase 5: the same list, with Issues and Pull requests raised to Read and write. Commit statuses stays Read. Contents stays off unless rollups come back empty on a private repo
 - If a future private repo returns an empty rollup, add Contents Read then
 - Expiration: 90 days is a reasonable first choice
 

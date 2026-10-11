@@ -1,0 +1,62 @@
+{
+  "data": {
+    "rateLimit": { "cost": 3, "remaining": 4997, "resetAt": "2026-10-10T13:00:00Z" },
+    "organization": {
+      "repositories": {
+        "totalCount": 2,
+        "pageInfo": { "hasNextPage": false, "endCursor": null },
+        "nodes": [
+          {
+            "name": "ham-radio-ui",
+            "isArchived": false,
+            "pullRequests": {
+              "nodes": [
+                {
+                  "number": 84,
+                  "title": "draft ui",
+                  "url": "https://github.com/springfield-ham-radio/ham-radio-ui/pull/84",
+                  "updatedAt": "2026-10-10T12:00:00Z",
+                  "isDraft": true,
+                  "author": { "login": "human" },
+                  "labels": { "nodes": [{ "name": "agent-working" }] },
+                  "commits": {
+                    "nodes": [
+                      {
+                        "commit": {
+                          "statusCheckRollup": {
+                            "state": "SUCCESS",
+                            "contexts": { "nodes": [] }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            },
+            "issues": {
+              "nodes": []
+            }
+          },
+          {
+            "name": "ham-radio-docs",
+            "isArchived": false,
+            "pullRequests": { "nodes": [] },
+            "issues": {
+              "nodes": [
+                {
+                  "number": 7,
+                  "title": "docs issue",
+                  "url": "https://github.com/springfield-ham-radio/ham-radio-docs/issues/7",
+                  "updatedAt": "2026-10-10T11:00:00Z",
+                  "author": { "login": "human" },
+                  "labels": { "nodes": [] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}
