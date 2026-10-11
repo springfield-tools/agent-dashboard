@@ -750,7 +750,7 @@ Scratch write test on `springfield-ham-radio` as in Phase 5. Open a row in `spri
 8. Bots. Is collapse-plus-surface-failures the right default, or should Dependabot be hidden entirely?
 9. The "about 11 open issues" figure. On 2026-10-10 the REST issues API returned 0 open issues across all 12 repos, and 33 open PRs. Were those 11 issues since closed, or do they live on a project board or another org this plan should include?
 10. Required check. Is `yarn lint`, `yarn test`, `cargo test`, and `cargo build` enough for the required `build` job, or must that job also produce a `.app`?
-11. Release secrets. Can this repo reuse the ham-radio-ui `RELEASE_APP_ID` / `RELEASE_APP_PRIVATE_KEY` GitHub App, or does it need its own?
+11. Release secrets. **Resolved:** agent-dashboard uses its own GitHub App (`RELEASE_APP_ID` / `RELEASE_APP_PRIVATE_KEY` on this repo). See ADR 0009.
 12. Morning summary. Is reading `snapshot.json` from Application Support a workable handoff, and does that job run on the same Mac?
 13. Label names. `.github` pull request 4 ("Sync org issue labels from labels.yml") is still a draft. Are `agent-working`, `needs-testing`, `needs-input`, and `ready-to-merge` stable?
 14. Idle and sleep. Idle auto-pause defaults off, with a 5-minute threshold, and sleep only suspends the process. Should idle auto-pause default on? Is "until tomorrow" the next local midnight, or a morning hour?

@@ -7,7 +7,9 @@ on:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded pull requests cancel. A push to main or beta runs to completion
+  # so semantic-release and the installer build are not dropped mid-release.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
@@ -29,3 +31,75 @@ jobs:
           workspaces: './src-tauri -> target'
       - run: cargo test --manifest-path src-tauri/Cargo.toml
       - run: cargo build --manifest-path src-tauri/Cargo.toml
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/beta')
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.released.outputs.tag }}
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - id: release-secrets
+        env:
+          RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$RELEASE_APP_ID" ] || [ -z "$RELEASE_APP_PRIVATE_KEY" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Release GitHub App secrets are not set; skipping semantic-release."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        if: steps.release-secrets.outputs.configured == 'true'
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7
+        if: steps.release-secrets.outputs.configured == 'true'
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/setup-node@v7
+        if: steps.release-secrets.outputs.configured == 'true'
+        with:
+          node-version-file: .nvmrc
+
+      - run: corepack enable
+        if: steps.release-secrets.outputs.configured == 'true'
+
+      - run: yarn install --immutable
+        if: steps.release-secrets.outputs.configured == 'true'
+
+      - run: yarn release
+        if: steps.release-secrets.outputs.configured == 'true'
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
+      - id: released
+        if: steps.release-secrets.outputs.configured == 'true'
+        run: |
+          if [ -f .released-tag ]; then
+            echo "tag=$(cat .released-tag)" >> "$GITHUB_OUTPUT"
+          fi
+
+  tauri:
+    needs: release
+    if: needs.release.outputs.tag != ''
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    uses: ./.github/workflows/release-tauri.yml
+    with:
+      tag: ${{ needs.release.outputs.tag }}
+    secrets: inherit

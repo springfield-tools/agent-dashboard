@@ -1,0 +1,59 @@
+name: Release Tauri
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Git tag to build (e.g. v0.2.0)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+# One queue per tag; do not cancel an in-flight upload when a newer push starts.
+concurrency:
+  group: release-tauri-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/create-github-app-token@v2
+        id: app-token
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag }}
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - run: corepack enable
+
+      - run: yarn install --immutable
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        with:
+          tagName: ${{ inputs.tag }}
+          releaseName: Agent Dashboard ${{ inputs.tag }}
+          releaseBody: Unsigned macOS build (Apple Silicon). See README for install steps.
+          releaseDraft: false
+          prerelease: ${{ contains(inputs.tag, '-') }}
+          args: --target aarch64-apple-darwin
