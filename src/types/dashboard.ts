@@ -66,6 +66,9 @@ export type ConfigStatus = {
   banner: string | null;
 };
 
+/** Matches `DEFAULT_POLL_INTERVAL` in `src-tauri/src/config.rs`. */
+export const DEFAULT_POLL_INTERVAL_SECONDS = 60;
+
 export const POLL_INTERVAL_PRESETS = [
   { label: '15s', seconds: 15 },
   { label: '30s', seconds: 30 },

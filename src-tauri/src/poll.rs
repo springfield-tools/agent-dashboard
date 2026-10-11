@@ -8,7 +8,7 @@ use tokio::sync::Notify;
 
 use crate::backoff::{wait_seconds_for_failure, FailureKind};
 use crate::brakes::{apply_brakes, brake_slow_interval_for_cost, LOW_REMAINING_STOP};
-use crate::config::{save_config, AppConfig};
+use crate::config::{save_config, AppConfig, DEFAULT_POLL_INTERVAL};
 use crate::credential::{clear_gh_session_cache, obtain_github_token, uses_gh_credential};
 use crate::etag_probe::{evaluate_probe, should_skip_graphql_after_org_probes};
 use crate::github::{fetch_all_orgs, GraphqlError};
@@ -193,7 +193,7 @@ pub fn start_background_poll(app: AppHandle, state: Arc<AppState>, runtime: Arc<
                     .config
                     .lock()
                     .map(|c| c.poll_interval_seconds)
-                    .unwrap_or(30)
+                    .unwrap_or(DEFAULT_POLL_INTERVAL)
             };
 
             let pause_when_idle = state

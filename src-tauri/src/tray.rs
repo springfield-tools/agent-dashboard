@@ -12,6 +12,7 @@ use crate::pause::{is_polling_paused, pause_tooltip};
 use crate::popover_anchor::{
     logical_position_tauri, physical_tray_rect, popover_logical_position, PhysicalTrayRect,
 };
+use crate::config::DEFAULT_POLL_INTERVAL;
 use crate::poll::{run_poll_cycle, update_config_and_save};
 use crate::state::AppState;
 
@@ -186,7 +187,7 @@ fn maybe_refresh_stale_snapshot<R: Runtime>(app: &tauri::AppHandle<R>) {
             .config
             .lock()
             .map(|c| c.poll_interval_seconds)
-            .unwrap_or(30);
+            .unwrap_or(DEFAULT_POLL_INTERVAL);
         let stale = state
             .dashboard
             .lock()

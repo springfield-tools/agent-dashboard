@@ -20,5 +20,5 @@ Phase 3 shipped live GraphQL polling with user pause. Phase 4 needs resilient po
 ## Consequences
 
 - CI can lag when ETag probe skips GraphQL; popover banner states staleness.
-- 15s interval with ~14-point ticks may hit the projection brake; 30s default stays under 2,500/hr for one org.
+- 15s interval with heavy ticks may hit the projection brake; the 60s default (~240 pts/hr at 4 pts/tick) stays well under 2,500/hr for one org.
 - Wake listener is macOS-only; non-macOS dev builds omit AppKit wiring.

@@ -35,7 +35,7 @@
           Poll
           <select
             class="control-select"
-            :value="configStatus?.pollIntervalSeconds ?? 30"
+            :value="configStatus?.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS"
             @change="onIntervalChange"
           >
             <option v-for="preset in POLL_INTERVAL_PRESETS" :key="preset.seconds" :value="preset.seconds">
@@ -161,6 +161,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue';
 
 import { formatRelativeTime } from './formatRelative';
 import {
+  DEFAULT_POLL_INTERVAL_SECONDS,
   POLL_INTERVAL_PRESETS,
   type ConfigStatus,
   type DashboardSnapshot,
@@ -217,7 +218,7 @@ const graphqlBudgetLabel = computed(() => {
 });
 
 const intervalLabel = computed(() => {
-  const secs = configStatus.value?.pollIntervalSeconds ?? 30;
+  const secs = configStatus.value?.pollIntervalSeconds ?? DEFAULT_POLL_INTERVAL_SECONDS;
   const preset = POLL_INTERVAL_PRESETS.find((p) => p.seconds === secs);
   return preset?.label ?? `${secs}s`;
 });

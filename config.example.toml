@@ -2,8 +2,8 @@
 # (the app writes this file with defaults on first launch).
 
 # Also edited from the popover presets (15s, 30s, 1m, 2m) in Phase 3+.
-# Allowed range is 15 to 900 seconds (15 minutes). Default 30.
-poll_interval_seconds = 30
+# Allowed range is 15 to 900 seconds (15 minutes). Default 60.
+poll_interval_seconds = 60
 
 # Written by Pause / Resume in Phase 3+. Omit the key, or set "running", to poll.
 # poll_pause = "manual"
@@ -12,7 +12,7 @@ pause_when_idle = false
 idle_pause_after_seconds = 300
 
 use_etag_probe = false
-ci_max_staleness_seconds = 30
+ci_max_staleness_seconds = 60
 
 [github]
 # "keychain" (default) uses Settings / Keychain. "gh" runs `gh auth token` (in-memory only).
