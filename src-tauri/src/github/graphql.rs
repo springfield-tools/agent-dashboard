@@ -7,7 +7,10 @@ use crate::config::{AppConfig, OrgConfig};
 use crate::credential::graphql_budget_key;
 use crate::model::{CiSnapshot, GraphqlBudgetLine, ItemKind, OrgSectionNotice, RawItem};
 
-use super::graphql_partial::{
+#[path = "graphql_partial.rs"]
+mod graphql_partial;
+
+use graphql_partial::{
     build_org_notice, merge_parsed_errors, only_rollup_access_errors, parse_graphql_errors,
     rollup_forbidden_at, ParsedGraphqlErrors,
 };
@@ -1340,8 +1343,7 @@ mod tests {
         assert!(!ok.ci_unknown);
         assert_eq!(ok.ci.as_ref().and_then(|c| c.state.as_deref()), Some("SUCCESS"));
         let notice =
-            super::graphql_partial::build_org_notice(&org.name, &page.parsed_errors)
-                .expect("notice");
+            build_org_notice(&org.name, &page.parsed_errors).expect("notice");
         assert!(notice.summary.contains("springfield-tools"));
         assert!(notice.summary.contains("1 PR"));
         assert_eq!(notice.details.len(), 1);

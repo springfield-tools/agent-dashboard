@@ -1,5 +1,4 @@
 mod graphql;
-mod graphql_partial;
 pub mod rest_writes;
 
 pub use graphql::{
