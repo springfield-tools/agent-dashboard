@@ -176,7 +176,6 @@ fn resume_polling(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Res
 }
 
 #[tauri::command]
-#[tauri::command]
 fn preview_row_action_cmd(
     state: tauri::State<'_, Arc<AppState>>,
     group_id: String,

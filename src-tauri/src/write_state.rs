@@ -110,7 +110,7 @@ impl WriteState {
         }
     }
 
-    pub fn ui_state(&self) -> WriteUiState {
+    pub fn ui_state(&mut self) -> WriteUiState {
         self.expire_undo();
         let undo_available = self.undo.is_some();
         let undo_message = if undo_available {

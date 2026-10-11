@@ -28,6 +28,21 @@ fn find_row(snapshot: &crate::model::DashboardSnapshot, key: &RowKey) -> Option<
     None
 }
 
+fn github_token(state: &AppState) -> Result<String, String> {
+    let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
+    obtain_github_token(&config, &state.poll_runtime.gh_token_cache, false).map_err(|opt| {
+        opt.unwrap_or_else(|| "GitHub token unavailable.".to_string())
+    })
+}
+
+fn lock_dashboard(state: &AppState) -> Result<crate::model::DashboardSnapshot, String> {
+    state
+        .dashboard
+        .lock()
+        .map(|g| g.clone())
+        .map_err(|_| "dashboard lock poisoned".to_string())
+}
+
 fn map_write_error(e: RestWriteError) -> String {
     match e {
         RestWriteError::Forbidden { message } => message,
@@ -91,11 +106,16 @@ async fn execute_inner(
     }
 
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
-    let token = obtain_github_token(&config).map_err(|e| e.to_string())?;
+    let token = github_token(state)?;
 
-    let snapshot = state.dashboard.lock().map(|g| g.clone()).unwrap_or_default();
+    let snapshot = lock_dashboard(state)?;
     let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
-    let merged = merged_snapshot(&snapshot, &config, &write_guard.optimistic_labels, &write_guard.pending);
+    let merged = merged_snapshot(
+        &snapshot,
+        &config,
+        &write_guard.optimistic_labels,
+        &write_guard.pending,
+    );
     let row = find_row(&merged, &key).ok_or_else(|| "Row not found.".to_string())?;
 
     let preview = preview_action(action, &row, &config.labels, note)?;
@@ -206,7 +226,7 @@ pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(),
         .build()
         .map_err(|e| e.to_string())?;
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
-    let token = obtain_github_token(&config).map_err(|e| e.to_string())?;
+    let token = github_token(state)?;
 
     let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
     let undo = write_guard
@@ -215,7 +235,7 @@ pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(),
         .ok_or_else(|| "Nothing to undo.".to_string())?;
     write_guard.expire_undo();
 
-    let snapshot = state.dashboard.lock().map(|g| g.clone()).unwrap_or_default();
+    let snapshot = lock_dashboard(state)?;
     let row = find_row(&snapshot, &undo.key).ok_or_else(|| "Row no longer visible.".to_string())?;
 
     let status = status_label_names(&config.labels);
@@ -261,7 +281,7 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
         .build()
         .map_err(|e| e.to_string())?;
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
-    let token = obtain_github_token(&config).map_err(|e| e.to_string())?;
+    let token = github_token(state)?;
 
     let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
     let partial = write_guard
@@ -330,7 +350,7 @@ pub fn write_ui_state(state: &AppState) -> crate::write_state::WriteUiState {
     state
         .write_state
         .lock()
-        .map(|g| g.ui_state())
+        .map(|mut g| g.ui_state())
         .unwrap_or_else(|_| crate::write_state::WriteUiState {
             pending_keys: vec![],
             undo_available: false,
