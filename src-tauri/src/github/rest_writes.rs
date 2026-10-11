@@ -439,21 +439,13 @@ mod tests {
         use crate::row_actions::{label_diff_for_action, RowActionKind};
         use crate::write_state::{make_undo_record, RowKey};
 
-        let server = MockServer::start();
-        let base = server.base_url();
-        let client = Client::builder().build().unwrap();
-        let token = "tok";
-        let owner = "o";
-        let repo = "r";
-        let number = 5u32;
-
         let labels = crate::config::LabelsConfig::default();
         let row = DashboardRow {
             kind: ItemKind::Pr,
             draft: false,
-            org: owner.to_string(),
-            repo: repo.to_string(),
-            number,
+            org: "o".to_string(),
+            repo: "r".to_string(),
+            number: 5,
             title: "Test".to_string(),
             url: "https://example.com".to_string(),
             author: "human".to_string(),
@@ -477,25 +469,29 @@ mod tests {
         assert_eq!(write_add, vec!["ready-to-merge".to_string()]);
 
         let body = "Testing passed. Ready to merge.\n\n— Agent Dashboard";
-        let write_to_add = vec!["ready-to-merge".to_string()];
-        let write_to_remove = vec!["needs-testing".to_string()];
 
-        let write_remove_needs_testing = server.mock(|when, then| {
+        // Write: remove needs-testing, add ready-to-merge.
+        let write_server = MockServer::start();
+        let write_base = write_server.base_url();
+        let write_client = Client::builder().build().unwrap();
+        let write_remove_needs_testing = write_server.mock(|when, then| {
             when.method(DELETE)
                 .path("/repos/o/r/issues/5/labels/needs-testing");
             then.status(200);
         });
-        let write_add_ready = server.mock(|when, then| {
+        let write_add_ready = write_server.mock(|when, then| {
             when.method(POST).path("/repos/o/r/issues/5/labels");
             then.status(200);
         });
+        let write_to_add = vec!["ready-to-merge".to_string()];
+        let write_to_remove = vec!["needs-testing".to_string()];
         apply_label_diff_at(
-            &client,
-            &base,
-            token,
-            owner,
-            repo,
-            number,
+            &write_client,
+            &write_base,
+            "tok",
+            "o",
+            "r",
+            5,
             &write_to_add,
             &write_to_remove,
         )
@@ -504,15 +500,15 @@ mod tests {
         write_remove_needs_testing.assert();
         write_add_ready.assert();
 
-        let comment_id = 42u64;
+        // Undo: remove ready-to-merge, re-add needs-testing, delete audit comment.
         let undo = make_undo_record(
             RowKey {
-                org: owner.to_string(),
-                repo: repo.to_string(),
-                number,
+                org: row.org.clone(),
+                repo: row.repo.clone(),
+                number: row.number,
             },
             &row,
-            Some(comment_id),
+            Some(42),
             body,
             &write_add,
             &write_remove,
@@ -520,16 +516,19 @@ mod tests {
         assert_eq!(undo.undo_labels_remove, vec!["ready-to-merge".to_string()]);
         assert_eq!(undo.undo_labels_add, vec!["needs-testing".to_string()]);
 
-        let undo_remove_ready = server.mock(|when, then| {
+        let undo_server = MockServer::start();
+        let undo_base = undo_server.base_url();
+        let undo_client = Client::builder().build().unwrap();
+        let undo_remove_ready = undo_server.mock(|when, then| {
             when.method(DELETE)
                 .path("/repos/o/r/issues/5/labels/ready-to-merge");
             then.status(200);
         });
-        let undo_add_needs_testing = server.mock(|when, then| {
+        let undo_add_needs_testing = undo_server.mock(|when, then| {
             when.method(POST).path("/repos/o/r/issues/5/labels");
             then.status(200);
         });
-        let undo_delete_comment = server.mock(|when, then| {
+        let undo_delete_comment = undo_server.mock(|when, then| {
             when.method(DELETE)
                 .path("/repos/o/r/issues/comments/42");
             then.status(204);
@@ -537,12 +536,12 @@ mod tests {
         let undo_to_add = undo.undo_labels_add.clone();
         let undo_to_remove = undo.undo_labels_remove.clone();
         apply_undo_label_diff_at(
-            &client,
-            &base,
-            token,
-            owner,
-            repo,
-            number,
+            &undo_client,
+            &undo_base,
+            "tok",
+            "o",
+            "r",
+            5,
             &undo_to_add,
             &undo_to_remove,
         )
@@ -550,8 +549,7 @@ mod tests {
         .expect("undo label diff");
         undo_remove_ready.assert();
         undo_add_needs_testing.assert();
-
-        delete_issue_comment_at(&client, &base, token, owner, repo, comment_id)
+        delete_issue_comment_at(&undo_client, &undo_base, "tok", "o", "r", 42)
             .await
             .expect("undo delete comment");
         undo_delete_comment.assert();
