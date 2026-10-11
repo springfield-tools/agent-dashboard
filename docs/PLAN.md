@@ -703,9 +703,25 @@ cd ~/Development/springfield-tools/agent-dashboard
 yarn tauri:dev
 ```
 
-Confirm tinted chips and darker cards in light and dark mode. Expand/collapse an org, quit, relaunch, and confirm the state. In Settings, confirm three org rows and ham-radio shows **ready** without re-entry.
+An existing `~/Library/Application Support/com.springfield.agent-dashboard/config.toml` is **not** rewritten. `[[orgs]]` already in that file wins, so a Phase 3–5 file that only lists `springfield-ham-radio` keeps polling that one org. Quit the app, then append these two blocks (leave the ham-radio block as it is) and relaunch:
 
-Create a fine-grained PAT for **springfield-tools** (resource owner springfield-tools): Issues and Pull requests **Read and write**, Metadata **Read**, Commit statuses **Read**. Save under **springfield-tools** in Settings. Repeat for **springfield-usa**, or set `credential = "gh"` on that org in config if `gh auth login` already covers it.
+```toml
+[[orgs]]
+name = "springfield-tools"
+include = []
+exclude = []
+
+[[orgs]]
+name = "springfield-usa"
+include = []
+exclude = []
+```
+
+Settings lists only orgs present in that file. It does not add orgs. After the edit, Settings shows three rows. Ham-radio stays **ready** without re-pasting the PAT (legacy Keychain item `github-token` is copied to `github-token-springfield-ham-radio` on first read, and the original is removed only after that copy reads back).
+
+Confirm tinted chips and darker cards in light and dark mode. Expand/collapse an org, quit, relaunch, and confirm the state.
+
+Create a fine-grained PAT for **springfield-tools** (resource owner springfield-tools): Issues and Pull requests **Read and write**, Metadata **Read**, Commit statuses **Read**. Save under **springfield-tools** in Settings. Repeat for **springfield-usa**, or set `credential = "gh"` on that `[[orgs]]` entry if `gh auth login` already covers it.
 
 Scratch write test on `springfield-ham-radio` as in Phase 5. Open a row in `springfield-tools` only after that org's token is ready.
 

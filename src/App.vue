@@ -365,6 +365,12 @@
           <strong>Read and write</strong>. Tokens stay in Keychain only — never in config or
           snapshot.
         </p>
+        <p v-if="missingDefaultOrgs.length" class="banner banner-warn">
+          Config lists {{ listedOrgNames }}. An existing config.toml is not upgraded in place.
+          Quit the app and append this to
+          <code>{{ configStatus?.configPath }}</code>, then relaunch:
+        </p>
+        <pre v-if="missingDefaultOrgs.length" class="action-comment">{{ missingOrgsToml }}</pre>
         <div
           v-for="entry in configStatus?.orgAuth ?? []"
           :key="entry.name"
@@ -490,6 +496,27 @@ async function reload(): Promise<void> {
     snapshot.value = null;
   }
 }
+
+const DEFAULT_ORG_NAMES = [
+  'springfield-ham-radio',
+  'springfield-tools',
+  'springfield-usa',
+] as const;
+
+const listedOrgNames = computed(() =>
+  (configStatus.value?.orgs ?? []).map((org) => org.name).join(', ') || 'no orgs',
+);
+
+const missingDefaultOrgs = computed(() => {
+  const present = new Set((configStatus.value?.orgs ?? []).map((org) => org.name));
+  return DEFAULT_ORG_NAMES.filter((name) => !present.has(name));
+});
+
+const missingOrgsToml = computed(() =>
+  missingDefaultOrgs.value
+    .map((name) => `[[orgs]]\nname = "${name}"\ninclude = []\nexclude = []`)
+    .join('\n\n'),
+);
 
 const orgSections = computed((): DashboardOrgSection[] => {
   const sections = snapshot.value?.orgSections;

@@ -77,7 +77,17 @@ pub fn migrate_legacy_token_to_org(org: &str) -> Result<(), KeychainError> {
     let legacy = load_token_for_account(LEGACY_ACCOUNT)?;
     if let Some(token) = legacy {
         store_token_for_account(&account, &token)?;
-        delete_token_for_account(LEGACY_ACCOUNT)?;
+        match load_token_for_account(&account)? {
+            Some(saved) if saved == token => {
+                delete_token_for_account(LEGACY_ACCOUNT)?;
+            }
+            _ => {
+                return Err(KeychainError::Message(
+                    "copied the legacy GitHub token but could not read it back; left the original Keychain item in place"
+                        .to_string(),
+                ));
+            }
+        }
     }
     Ok(())
 }
