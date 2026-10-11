@@ -7,6 +7,12 @@ on:
         description: Git tag to build (e.g. v0.2.0)
         required: true
         type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to rebuild (e.g. v0.2.0)
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -52,8 +58,6 @@ jobs:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         with:
           tagName: ${{ inputs.tag }}
-          releaseName: Agent Dashboard ${{ inputs.tag }}
-          releaseBody: Unsigned macOS build (Apple Silicon). See README for install steps.
           releaseDraft: false
           prerelease: ${{ contains(inputs.tag, '-') }}
           args: --target aarch64-apple-darwin

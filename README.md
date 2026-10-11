@@ -6,7 +6,7 @@ The implementation plan is in [`docs/PLAN.md`](docs/PLAN.md). Accepted architect
 
 ## Downloads
 
-macOS (Apple Silicon) builds are on [GitHub Releases](https://github.com/springfield-tools/agent-dashboard/releases). Packaged builds are **unsigned** (right-click the app or `.dmg` → **Open** if Gatekeeper blocks). For development from source, use the checkout at `~/Development/springfield-tools/agent-dashboard`.
+macOS (Apple Silicon) builds are on [GitHub Releases](https://github.com/springfield-tools/agent-dashboard/releases). Packaged builds are **unsigned** (open the `.dmg`, then right-click the app → **Open** if Gatekeeper blocks). For development from source, use the checkout at `~/Development/springfield-tools/agent-dashboard`.
 
 ## Development
 

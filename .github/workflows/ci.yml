@@ -66,8 +66,7 @@ jobs:
         if: steps.release-secrets.outputs.configured == 'true'
         with:
           fetch-depth: 0
-          persist-credentials: true
-          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
 
       - uses: actions/setup-node@v7
         if: steps.release-secrets.outputs.configured == 'true'

@@ -23,5 +23,5 @@ We keep `@semantic-release/git` so `package.json`, `Cargo.toml`, and `CHANGELOG.
 ## Consequences
 
 - Bryan must create and install a **separate** GitHub App on `springfield-tools/agent-dashboard` and store the two secrets before the first automated release.
-- Until secrets exist, merges to `main` still run `build` only; no release is published.
+- Until secrets exist, the `release` job still runs on `main` pushes but skips semantic-release successfully; `build` passes and no GitHub Release is created.
 - macOS artifacts are unsigned; README documents Gatekeeper bypass and the local dev path.
