@@ -109,32 +109,34 @@ async fn execute_inner(
     let token = github_token(state.as_ref())?;
 
     let snapshot = lock_dashboard(state.as_ref())?;
-    let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
-    let merged = merged_snapshot(
-        &snapshot,
-        &config,
-        &write_guard.optimistic_labels,
-        &write_guard.pending,
-    );
-    let row = find_row(&merged, &key).ok_or_else(|| "Row not found.".to_string())?;
+    let (row, to_add, to_remove, body) = {
+        let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
+        let merged = merged_snapshot(
+            &snapshot,
+            &config,
+            &write_guard.optimistic_labels,
+            &write_guard.pending,
+        );
+        let row = find_row(&merged, &key).ok_or_else(|| "Row not found.".to_string())?;
 
-    let preview = preview_action(action, &row, &config.labels, note)?;
-    let (to_add, to_remove) = label_diff_for_action(action, &row.labels, &config.labels);
-    let body = preview.comment_body.clone();
+        let preview = preview_action(action, &row, &config.labels, note)?;
+        let (to_add, to_remove) = label_diff_for_action(action, &row.labels, &config.labels);
+        let body = preview.comment_body.clone();
 
-    let new_labels = labels_after_diff(&row.labels, &to_add, &to_remove);
-    write_guard.pending.insert(key.clone());
-    write_guard.optimistic_labels.insert(key.clone(), new_labels.clone());
-    write_guard.partial = None;
-    write_guard.toast = None;
+        let new_labels = labels_after_diff(&row.labels, &to_add, &to_remove);
+        write_guard.pending.insert(key.clone());
+        write_guard.optimistic_labels.insert(key.clone(), new_labels.clone());
+        write_guard.partial = None;
+        write_guard.toast = None;
 
-    let optimistic_snapshot = apply_optimistic_labels(&snapshot, &config, &key, new_labels);
-    state.set_dashboard(optimistic_snapshot);
-    drop(write_guard);
+        let optimistic_snapshot = apply_optimistic_labels(&snapshot, &config, &key, new_labels);
+        state.set_dashboard(optimistic_snapshot);
+        (row, to_add, to_remove, body)
+    };
     let _ = app.emit("dashboard-updated", ());
 
-    let owner = &row.org;
-    let comment_result = post_issue_comment(client, &token, owner, &row.repo, row.number, &body).await;
+    let comment_result =
+        post_issue_comment(client, &token, &row.org, &row.repo, row.number, &body).await;
 
     let mut write_guard = state.write_state.lock().map_err(|_| "write lock")?;
 
