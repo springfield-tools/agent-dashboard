@@ -421,7 +421,7 @@ fn patch_config_document(existing: &str, config: &AppConfig) -> Result<String, S
         }
     }
 
-    if let Some(orgs) = doc.get_mut("orgs").and_then(|v| v.as_array_mut()) {
+    if let Some(orgs) = doc.get_mut("orgs").and_then(|v| v.as_array_of_tables_mut()) {
         for org_table in orgs.iter_mut() {
             let name = org_table
                 .get("name")
@@ -585,23 +585,33 @@ exclude = []
 poll_interval_seconds = 60
 
 [[orgs]]
+name = "springfield-tools"
+include = []
+exclude = []
+
+[[orgs]]
 name = "springfield-usa"
 include = []
 exclude = []
+# usa footer
 "#;
         fs::write(&path, original).expect("write");
 
         let mut config = parse_config_toml(original).expect("parse");
-        config.orgs[0].enabled = false;
+        assert_eq!(config.orgs.len(), 2);
+        config.orgs[1].enabled = false;
         save_config(&path, &config).expect("save");
 
         let written = fs::read_to_string(&path).expect("read");
         assert!(written.contains("# projects"));
+        assert!(written.contains("# usa footer"));
+        assert!(written.contains("name = \"springfield-tools\""));
         assert!(written.contains("enabled = false"));
 
         let (loaded, err) = load_config(&path);
         assert!(err.is_none());
-        assert!(!loaded.orgs[0].enabled);
+        assert!(loaded.orgs[0].enabled);
+        assert!(!loaded.orgs[1].enabled);
 
         let _ = fs::remove_dir_all(&dir);
     }

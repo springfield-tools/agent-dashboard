@@ -53,11 +53,17 @@ pub fn org_credential_source_label(org: &OrgConfig, config: &AppConfig) -> &'sta
 }
 
 pub fn credential_is_ready(config: &AppConfig) -> bool {
-    let enabled = config.orgs.iter().filter(|org| org.enabled);
-    if enabled.clone().count() == 0 {
-        return true;
+    let mut any_enabled = false;
+    for org in &config.orgs {
+        if !org.enabled {
+            continue;
+        }
+        any_enabled = true;
+        if !org_credential_is_ready(org, config) {
+            return false;
+        }
     }
-    enabled.all(|org| org_credential_is_ready(org, config))
+    true
 }
 
 pub fn org_credential_is_ready(org: &OrgConfig, config: &AppConfig) -> bool {
@@ -208,6 +214,22 @@ mod tests {
         assert!(uses_gh_credential(&config));
         config.github.credential = "GH".to_string();
         assert!(uses_gh_credential(&config));
+    }
+
+    #[test]
+    fn credential_ready_ignores_disabled_org_without_token() {
+        let mut config = AppConfig::default();
+        config.orgs[2].enabled = false;
+        assert!(credential_is_ready(&config));
+    }
+
+    #[test]
+    fn credential_ready_when_all_orgs_disabled() {
+        let mut config = AppConfig::default();
+        for org in &mut config.orgs {
+            org.enabled = false;
+        }
+        assert!(credential_is_ready(&config));
     }
 
     #[test]

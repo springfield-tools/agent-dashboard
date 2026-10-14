@@ -544,7 +544,8 @@ pub fn build_dashboard(
     {
         let org = config
             .orgs
-            .first()
+            .iter()
+            .find(|o| o.enabled)
             .map(|o| o.name.as_str())
             .unwrap_or("springfield-ham-radio");
         Some(BotFooter {

@@ -41,8 +41,8 @@ use crate::pause::{
     pause_until_tomorrow_local_value, pause_tooltip,
 };
 use crate::poll::{
-    rebuild_dashboard_after_org_disabled, run_poll_cycle, start_background_poll,
-    update_config_and_save, PollRuntime,
+    rebuild_dashboard_after_org_disabled, run_poll_cycle, save_config_in_memory,
+    start_background_poll, update_config_and_save, PollRuntime,
 };
 use crate::row_actions::RowActionKind;
 use crate::row_writes::{
@@ -310,9 +310,8 @@ async fn set_org_enabled(
         return Ok(());
     }
     entry.enabled = enabled;
-    update_config_and_save(state.inner(), config)?;
+    save_config_in_memory(state.inner(), &config)?;
     if enabled {
-        state.poll_runtime.pending_wake.store(true, std::sync::atomic::Ordering::SeqCst);
         let app = app.clone();
         let state = state.inner().clone();
         tauri::async_runtime::spawn(async move {
@@ -321,6 +320,15 @@ async fn set_org_enabled(
         });
     } else {
         rebuild_dashboard_after_org_disabled(state.inner())?;
+        #[cfg(target_os = "macos")]
+        {
+            let snap = state
+                .dashboard
+                .lock()
+                .map(|d| d.clone())
+                .unwrap_or_default();
+            crate::tray::sync_tray_from_snapshot(&app, &snap);
+        }
         let _ = app.emit("dashboard-updated", ());
     }
     Ok(())

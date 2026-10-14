@@ -377,6 +377,15 @@ pub async fn run_poll_cycle<R: Runtime>(
             .map(|c| c.clone())
             .map_err(|_| "config lock poisoned".to_string())?;
 
+        let enabled_org_count = config.orgs.iter().filter(|o| o.enabled).count();
+        if enabled_org_count == 0 {
+            state.set_auth_error(None);
+            state.set_banner(None);
+            rebuild_dashboard_after_org_disabled(state)?;
+            let _ = app.emit("dashboard-updated", ());
+            return Ok(());
+        }
+
         let last_fetched = state
             .dashboard
             .lock()
@@ -655,11 +664,16 @@ pub async fn run_poll_cycle<R: Runtime>(
 }
 
 pub fn update_config_and_save(state: &AppState, config: AppConfig) -> Result<(), String> {
-    save_config(&state.config_path, &config)?;
-    if let Ok(mut guard) = state.config.lock() {
-        *guard = config;
-    }
+    save_config_in_memory(state, &config)?;
     state.poll_runtime.wake.notify_one();
+    Ok(())
+}
+
+pub fn save_config_in_memory(state: &AppState, config: &AppConfig) -> Result<(), String> {
+    save_config(&state.config_path, config)?;
+    if let Ok(mut guard) = state.config.lock() {
+        *guard = config.clone();
+    }
     Ok(())
 }
 
@@ -685,16 +699,35 @@ pub fn rebuild_dashboard_after_org_disabled(state: &AppState) -> Result<(), Stri
         .filter(|b| org_name_is_enabled(&config, &b.credential_key) || b.credential_key == "gh")
         .cloned()
         .collect();
-    let snapshot = build_dashboard(
+    let org_auth_banners: HashMap<String, String> = previous
+        .org_sections
+        .iter()
+        .filter_map(|s| {
+            s.auth_banner
+                .as_ref()
+                .map(|b| (s.org.clone(), b.clone()))
+        })
+        .collect();
+    let org_section_notices: HashMap<String, crate::model::OrgSectionNotice> = previous
+        .org_sections
+        .iter()
+        .filter_map(|s| {
+            s.section_notice
+                .as_ref()
+                .map(|n| (s.org.clone(), n.clone()))
+        })
+        .collect();
+    let mut snapshot = build_dashboard(
         items,
         &config,
         &previous.fetched_at,
         previous.graphql_poll_cost,
         previous.graphql_remaining,
         budgets,
-        HashMap::new(),
-        HashMap::new(),
+        org_auth_banners,
+        org_section_notices,
     );
-    state.set_dashboard(snapshot);
+    snapshot.stale = previous.stale;
+    state.set_dashboard(snapshot.clone());
     Ok(())
 }

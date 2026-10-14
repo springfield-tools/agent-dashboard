@@ -286,6 +286,9 @@ pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(),
             .org
             .clone()
     };
+    if !org_name_is_enabled(&config, &undo_peek) {
+        return Err("That project is turned off in Settings.".to_string());
+    }
     let token = github_token_for_org(state_ref, &undo_peek)?;
 
     let undo = {
@@ -347,6 +350,7 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
         .user_agent("agent-dashboard")
         .build()
         .map_err(|e| e.to_string())?;
+    let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
     let org_for_token = {
         let write_guard = state.write_state.lock().map_err(|_| "write lock")?;
         write_guard
@@ -357,6 +361,9 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
             .org
             .clone()
     };
+    if !org_name_is_enabled(&config, &org_for_token) {
+        return Err("That project is turned off in Settings.".to_string());
+    }
     let token = github_token_for_org(state_ref, &org_for_token)?;
 
     let partial = {
