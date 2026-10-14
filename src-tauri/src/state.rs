@@ -6,6 +6,7 @@ use chrono::Utc;
 use crate::config::AppConfig;
 use crate::fixture::load_checked_in_items;
 use crate::model::{build_dashboard_simple, DashboardSnapshot};
+use crate::poll::filter_dashboard_snapshot;
 use crate::etag_probe::EtagStore;
 use crate::poll::PollRuntime;
 use crate::snapshot::load_snapshot_file;
@@ -42,10 +43,11 @@ impl AppState {
             let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
             build_dashboard_simple(items, &config, &fetched_at, None, None)
         } else if let Some(path) = snapshot_path.as_ref() {
-            load_snapshot_file(path).unwrap_or_else(|| {
+            let loaded = load_snapshot_file(path).unwrap_or_else(|| {
                 let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
                 build_dashboard_simple(vec![], &config, &fetched_at, None, None)
-            })
+            });
+            filter_dashboard_snapshot(&config, &loaded).unwrap_or(loaded)
         } else {
             let fetched_at = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
             build_dashboard_simple(vec![], &config, &fetched_at, None, None)

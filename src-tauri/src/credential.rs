@@ -53,10 +53,15 @@ pub fn org_credential_source_label(org: &OrgConfig, config: &AppConfig) -> &'sta
 }
 
 pub fn credential_is_ready(config: &AppConfig) -> bool {
-    config
-        .orgs
-        .iter()
-        .all(|org| org_credential_is_ready(org, config))
+    for org in &config.orgs {
+        if !org.enabled {
+            continue;
+        }
+        if !org_credential_is_ready(org, config) {
+            return false;
+        }
+    }
+    true
 }
 
 pub fn org_credential_is_ready(org: &OrgConfig, config: &AppConfig) -> bool {
@@ -210,11 +215,30 @@ mod tests {
     }
 
     #[test]
+    fn credential_ready_ignores_disabled_org_without_token() {
+        let mut with_usa_disabled = AppConfig::default();
+        with_usa_disabled.orgs[2].enabled = false;
+        let ready_usa_off = credential_is_ready(&with_usa_disabled);
+        let mut with_usa_enabled = AppConfig::default();
+        assert_eq!(ready_usa_off, credential_is_ready(&with_usa_enabled));
+    }
+
+    #[test]
+    fn credential_ready_when_all_orgs_disabled() {
+        let mut config = AppConfig::default();
+        for org in &mut config.orgs {
+            org.enabled = false;
+        }
+        assert!(credential_is_ready(&config));
+    }
+
+    #[test]
     fn org_credential_override() {
         let mut config = AppConfig::default();
         config.github.credential = "keychain".to_string();
         let org = OrgConfig {
             name: "springfield-tools".to_string(),
+            enabled: true,
             credential: Some("gh".to_string()),
             include: vec![],
             exclude: vec![],

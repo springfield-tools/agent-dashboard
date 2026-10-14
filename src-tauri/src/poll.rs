@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,7 +9,7 @@ use tokio::sync::Notify;
 
 use crate::backoff::{wait_seconds_for_failure, FailureKind};
 use crate::brakes::{apply_brakes, brake_slow_interval_for_cost, LOW_REMAINING_STOP};
-use crate::config::{save_config, AppConfig, DEFAULT_POLL_INTERVAL};
+use crate::config::{org_name_is_enabled, save_config, AppConfig, DEFAULT_POLL_INTERVAL};
 use crate::credential::{clear_gh_session_cache, obtain_github_token_for_org, org_uses_gh};
 use crate::etag_probe::{evaluate_probe, should_skip_graphql_after_org_probes};
 use crate::github::{fetch_all_orgs_multi, GraphqlError};
@@ -23,7 +24,7 @@ use crate::tray;
 
 pub struct PollRuntime {
     pub wake: Notify,
-    in_flight: AtomicBool,
+    pub(crate) in_flight: AtomicBool,
     failure_backoff_secs: Mutex<u64>,
     rate_limit_until: Mutex<Option<DateTime<Utc>>>,
     gh_token_cache: Mutex<Option<String>>,
@@ -376,6 +377,19 @@ pub async fn run_poll_cycle<R: Runtime>(
             .map(|c| c.clone())
             .map_err(|_| "config lock poisoned".to_string())?;
 
+        let enabled_org_count = config.orgs.iter().filter(|o| o.enabled).count();
+        if enabled_org_count == 0 {
+            state.set_auth_error(None);
+            state.set_banner(None);
+            state.set_offline(false);
+            let snapshot = filter_dashboard_for_config(state)?;
+            persist_snapshot_file(state, &snapshot);
+            #[cfg(target_os = "macos")]
+            tray::sync_tray_from_snapshot(app, &snapshot);
+            let _ = app.emit("dashboard-updated", ());
+            return Ok(());
+        }
+
         let last_fetched = state
             .dashboard
             .lock()
@@ -386,7 +400,7 @@ pub async fn run_poll_cycle<R: Runtime>(
             let mut probe_outcomes: Vec<Result<crate::etag_probe::ProbeDecision, String>> =
                 Vec::new();
             let mut combined_banner = None;
-            for org in &config.orgs {
+            for org in config.orgs.iter().filter(|o| o.enabled) {
                 let token = match obtain_github_token_for_org(
                     &config,
                     org,
@@ -420,8 +434,9 @@ pub async fn run_poll_cycle<R: Runtime>(
                 }
                 combined_banner = probe.banner.or(combined_banner);
             }
+            let enabled_org_count = config.orgs.iter().filter(|o| o.enabled).count();
             let skip_all = should_skip_graphql_after_org_probes(
-                config.orgs.len(),
+                enabled_org_count,
                 &probe_outcomes,
             );
             if skip_all {
@@ -485,7 +500,11 @@ pub async fn run_poll_cycle<R: Runtime>(
             }
         }
 
-        if fetch.items.is_empty() && fetch.org_errors.len() == config.orgs.len() && !config.orgs.is_empty() {
+        let enabled_org_count = config.orgs.iter().filter(|o| o.enabled).count();
+        if fetch.items.is_empty()
+            && fetch.org_errors.len() == enabled_org_count
+            && enabled_org_count > 0
+        {
             let message = fetch
                 .org_errors
                 .values()
@@ -540,8 +559,18 @@ pub async fn run_poll_cycle<R: Runtime>(
             .lock()
             .map(|d| d.clone())
             .unwrap_or_else(|_| crate::model::build_dashboard_simple(vec![], &config, "", None, None));
+        let config = state
+            .config
+            .lock()
+            .map(|c| c.clone())
+            .map_err(|_| "config lock poisoned".to_string())?;
+
         let mut merged_items = fetch.items;
+        merged_items.retain(|i| org_name_is_enabled(&config, &i.org));
         for org_name in fetch.org_errors.keys() {
+            if !org_name_is_enabled(&config, org_name) {
+                continue;
+            }
             for item in snapshot_rows_to_raw(&previous) {
                 if item.org != *org_name {
                     continue;
@@ -649,10 +678,104 @@ pub async fn run_poll_cycle<R: Runtime>(
 }
 
 pub fn update_config_and_save(state: &AppState, config: AppConfig) -> Result<(), String> {
-    save_config(&state.config_path, &config)?;
-    if let Ok(mut guard) = state.config.lock() {
-        *guard = config;
-    }
+    save_config_in_memory(state, &config)?;
     state.poll_runtime.wake.notify_one();
+    Ok(())
+}
+
+pub fn save_config_in_memory(state: &AppState, config: &AppConfig) -> Result<(), String> {
+    save_config(&state.config_path, config)?;
+    if let Ok(mut guard) = state.config.lock() {
+        *guard = config.clone();
+    }
+    Ok(())
+}
+
+pub fn persist_snapshot_file(state: &AppState, snapshot: &crate::model::DashboardSnapshot) {
+    if let Some(parent) = state.config_path.parent() {
+        let path = parent.join("snapshot.json");
+        if let Err(e) = write_snapshot_file(&path, snapshot) {
+            log::warn!("snapshot: {e}");
+        }
+    }
+}
+
+/// Rebuild the dashboard from the last snapshot, dropping disabled org rows (no GitHub calls).
+pub fn filter_dashboard_for_config(
+    state: &AppState,
+) -> Result<crate::model::DashboardSnapshot, String> {
+    let config = state
+        .config
+        .lock()
+        .map(|c| c.clone())
+        .map_err(|_| "config lock poisoned".to_string())?;
+    let previous = state
+        .dashboard
+        .lock()
+        .map(|d| d.clone())
+        .map_err(|_| "dashboard lock poisoned".to_string())?;
+    filter_dashboard_snapshot(&config, &previous)
+}
+
+pub fn filter_dashboard_snapshot(
+    config: &AppConfig,
+    previous: &crate::model::DashboardSnapshot,
+) -> Result<crate::model::DashboardSnapshot, String> {
+    let items = snapshot_rows_to_raw(previous)
+        .into_iter()
+        .filter(|i| org_name_is_enabled(config, &i.org))
+        .collect();
+    let budgets = previous
+        .graphql_budgets
+        .iter()
+        .filter(|b| {
+            if b.credential_key == "gh" {
+                config
+                    .orgs
+                    .iter()
+                    .any(|o| o.enabled && org_uses_gh(o, config))
+            } else {
+                org_name_is_enabled(config, &b.credential_key)
+            }
+        })
+        .cloned()
+        .collect();
+    let org_auth_banners: HashMap<String, String> = previous
+        .org_sections
+        .iter()
+        .filter(|s| org_name_is_enabled(config, &s.org))
+        .filter_map(|s| {
+            s.auth_banner
+                .as_ref()
+                .map(|b| (s.org.clone(), b.clone()))
+        })
+        .collect();
+    let org_section_notices: HashMap<String, crate::model::OrgSectionNotice> = previous
+        .org_sections
+        .iter()
+        .filter(|s| org_name_is_enabled(config, &s.org))
+        .filter_map(|s| {
+            s.section_notice
+                .as_ref()
+                .map(|n| (s.org.clone(), n.clone()))
+        })
+        .collect();
+    let mut snapshot = build_dashboard(
+        items,
+        config,
+        &previous.fetched_at,
+        previous.graphql_poll_cost,
+        previous.graphql_remaining,
+        budgets,
+        org_auth_banners,
+        org_section_notices,
+    );
+    snapshot.stale = previous.stale;
+    Ok(snapshot)
+}
+
+pub fn rebuild_dashboard_after_org_disabled(state: &AppState) -> Result<(), String> {
+    let snapshot = filter_dashboard_for_config(state)?;
+    state.set_dashboard(snapshot);
     Ok(())
 }

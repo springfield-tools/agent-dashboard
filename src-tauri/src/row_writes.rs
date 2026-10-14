@@ -3,8 +3,7 @@ use std::sync::Arc;
 use reqwest::Client;
 use tauri::{AppHandle, Emitter};
 
-use crate::config::AppConfig;
-use crate::config::OrgConfig;
+use crate::config::{org_name_is_enabled, OrgConfig};
 use crate::credential::obtain_github_token_for_org;
 use crate::github::rest_writes::{
     apply_label_diff, delete_issue_comment, post_issue_comment, RestWriteError,
@@ -48,6 +47,7 @@ fn github_token_for_org(state: &AppState, org_name: &str) -> Result<String, Stri
         .cloned()
         .unwrap_or_else(|| OrgConfig {
             name: org_name.to_string(),
+            enabled: true,
             credential: None,
             include: vec![],
             exclude: vec![],
@@ -91,6 +91,9 @@ pub fn preview_row_action(
         return Err("Action is not available for this row.".to_string());
     }
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
+    if !org_name_is_enabled(&config, org) {
+        return Err("That project is turned off in Settings.".to_string());
+    }
     let snapshot = state
         .dashboard
         .lock()
@@ -127,6 +130,9 @@ async fn execute_inner(
     }
 
     let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
+    if !org_name_is_enabled(&config, &key.org) {
+        return Err("That project is turned off in Settings.".to_string());
+    }
     let snapshot = lock_dashboard(state.as_ref())?;
     let row_for_token = {
         let write_guard = state.write_state.lock().map_err(|_| "write lock")?;
@@ -280,6 +286,9 @@ pub async fn undo_row_action(app: AppHandle, state: Arc<AppState>) -> Result<(),
             .org
             .clone()
     };
+    if !org_name_is_enabled(&config, &undo_peek) {
+        return Err("That project is turned off in Settings.".to_string());
+    }
     let token = github_token_for_org(state_ref, &undo_peek)?;
 
     let undo = {
@@ -341,6 +350,7 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
         .user_agent("agent-dashboard")
         .build()
         .map_err(|e| e.to_string())?;
+    let config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
     let org_for_token = {
         let write_guard = state.write_state.lock().map_err(|_| "write lock")?;
         write_guard
@@ -351,6 +361,9 @@ pub async fn retry_partial_write(app: AppHandle, state: Arc<AppState>) -> Result
             .org
             .clone()
     };
+    if !org_name_is_enabled(&config, &org_for_token) {
+        return Err("That project is turned off in Settings.".to_string());
+    }
     let token = github_token_for_org(state_ref, &org_for_token)?;
 
     let partial = {

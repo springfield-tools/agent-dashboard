@@ -40,7 +40,10 @@ use crate::pause::{
     is_polling_paused, pause_for_one_hour_value, pause_manual_value,
     pause_until_tomorrow_local_value, pause_tooltip,
 };
-use crate::poll::{start_background_poll, update_config_and_save, PollRuntime};
+use crate::poll::{
+    rebuild_dashboard_after_org_disabled, run_poll_cycle, save_config_in_memory,
+    start_background_poll, update_config_and_save, PollRuntime,
+};
 use crate::row_actions::RowActionKind;
 use crate::row_writes::{
     execute_row_action, preview_row_action, retry_partial_write, undo_row_action, write_ui_state,
@@ -51,6 +54,7 @@ use crate::state::AppState;
 #[serde(rename_all = "camelCase")]
 struct OrgAuthStatus {
     name: String,
+    enabled: bool,
     credential_source: String,
     ready: bool,
 }
@@ -127,8 +131,17 @@ fn config_status(state: tauri::State<'_, Arc<AppState>>) -> ConfigStatus {
         .iter()
         .map(|org| OrgAuthStatus {
             name: org.name.clone(),
-            credential_source: org_credential_source_label(org, &config).to_string(),
-            ready: org_credential_is_ready(org, &config),
+            enabled: org.enabled,
+            credential_source: if org.enabled {
+                org_credential_source_label(org, &config).to_string()
+            } else {
+                "off".to_string()
+            },
+            ready: if org.enabled {
+                org_credential_is_ready(org, &config)
+            } else {
+                true
+            },
         })
         .collect();
 
@@ -281,6 +294,56 @@ fn write_ui_state_cmd(state: tauri::State<'_, Arc<AppState>>) -> crate::write_st
 }
 
 #[tauri::command]
+async fn set_org_enabled(
+    app: AppHandle,
+    state: tauri::State<'_, Arc<AppState>>,
+    org: String,
+    enabled: bool,
+) -> Result<(), String> {
+    let mut config = state.config.lock().map(|c| c.clone()).unwrap_or_default();
+    let entry = config
+        .orgs
+        .iter_mut()
+        .find(|o| o.name == org)
+        .ok_or_else(|| format!("Unknown org \"{org}\" in config."))?;
+    if entry.enabled == enabled {
+        return Ok(());
+    }
+    entry.enabled = enabled;
+    save_config_in_memory(state.inner(), &config)?;
+    if enabled {
+        let runtime = &state.poll_runtime;
+        if runtime
+            .in_flight
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            runtime.pending_wake.store(true, std::sync::atomic::Ordering::SeqCst);
+            runtime.wake.notify_one();
+        } else {
+            let app = app.clone();
+            let state = state.inner().clone();
+            tauri::async_runtime::spawn(async move {
+                let client = reqwest::Client::new();
+                let _ = run_poll_cycle(&app, &state, &client, true, true).await;
+            });
+        }
+    } else {
+        rebuild_dashboard_after_org_disabled(state.inner())?;
+        let snap = state
+            .dashboard
+            .lock()
+            .map(|d| d.clone())
+            .map_err(|_| "dashboard lock poisoned".to_string())?;
+        crate::poll::persist_snapshot_file(state.inner(), &snap);
+        state.set_auth_error(None);
+        #[cfg(target_os = "macos")]
+        crate::tray::sync_tray_from_snapshot(&app, &snap);
+        let _ = app.emit("dashboard-updated", ());
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn refresh_now(app: AppHandle, state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     tray::trigger_refresh(&app, true);
@@ -321,6 +384,7 @@ pub fn run(fixture_mode: bool) {
             ui_state_cmd,
             set_org_section_collapsed,
             set_item_kind_filter_cmd,
+            set_org_enabled,
         ]);
 
     builder = builder.setup(move |app| {

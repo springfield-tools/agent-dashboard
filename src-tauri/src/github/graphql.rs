@@ -969,7 +969,7 @@ pub async fn fetch_all_orgs_multi(
     let mut empty_hint = None;
     let mut repos_visible = 0u32;
 
-    for org in &config.orgs {
+    for org in config.orgs.iter().filter(|o| o.enabled) {
         let token = match token_for_org(org) {
             Ok(t) => t,
             Err(message) => {
@@ -1250,6 +1250,7 @@ mod tests {
     fn legacy_search_query_includes_archived_false() {
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            enabled: true,
             credential: None,
             include: vec![],
             exclude: vec![],
@@ -1268,6 +1269,7 @@ mod tests {
         .expect("json");
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            enabled: true,
             credential: None,
             include: vec![],
             exclude: vec![],
@@ -1325,6 +1327,7 @@ mod tests {
         .expect("json");
         let org = OrgConfig {
             name: "springfield-tools".to_string(),
+            enabled: true,
             credential: None,
             include: vec![],
             exclude: vec![],
@@ -1357,6 +1360,7 @@ mod tests {
         .expect("json");
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            enabled: true,
             credential: None,
             include: vec![],
             exclude: vec![],
@@ -1375,6 +1379,7 @@ mod tests {
         .expect("json");
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            enabled: true,
             credential: None,
             include: vec!["ham-radio-ui".to_string()],
             exclude: vec![],
@@ -1423,10 +1428,29 @@ mod tests {
         assert!(ci.failed_checks.is_empty());
     }
 
+    #[tokio::test]
+    async fn multi_org_fetch_skips_disabled_orgs() {
+        use std::sync::Mutex;
+
+        let mut config = AppConfig::default();
+        config.orgs[2].enabled = false;
+        let touched = Mutex::new(Vec::new());
+        let client = reqwest::Client::new();
+        let result = fetch_all_orgs_multi(&client, &config, |org| {
+            touched.lock().unwrap().push(org.name.clone());
+            Err("no token".to_string())
+        })
+        .await;
+        assert_eq!(result.org_errors.len(), 2);
+        let names = touched.lock().unwrap();
+        assert!(!names.iter().any(|n| n == "springfield-usa"));
+    }
+
     #[test]
     fn paginates_search_results() {
         let org = OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            enabled: true,
             credential: None,
             include: vec![],
             exclude: vec![],

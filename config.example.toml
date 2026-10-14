@@ -35,6 +35,7 @@ ready_to_merge = "ready-to-merge"
 
 # Each org can set credential = "keychain" (per-org Keychain PAT) or "gh" (CLI).
 # When omitted, uses [github].credential.
+# Set enabled = false to stop polling an org (toggle in Settings). Default true.
 
 [[orgs]]
 name = "springfield-ham-radio"
@@ -51,4 +52,5 @@ exclude = []
 name = "springfield-usa"
 include = []
 exclude = []
+# enabled = false
 # credential = "gh"

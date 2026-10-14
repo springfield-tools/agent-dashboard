@@ -726,6 +726,25 @@ Create a fine-grained PAT for **springfield-tools** (resource owner springfield-
 
 Scratch write test on `springfield-ham-radio` as in Phase 5. Open a row in `springfield-tools` only after that org's token is ready.
 
+### Phase 5.2 — Per-org on/off
+
+**Scope.** Each `[[orgs]]` row may set `enabled = true|false` (default true). The Settings sheet shows an on/off toggle beside each org's token status (disabled rows stay listed, dimmed). A disabled org is not polled (no GraphQL, no credential lookup, no per-org auth banner), is omitted from popover sections, tray counts, and GraphQL budget lines, and row actions cannot target its rows. Turning an org back on writes config via `toml_edit` (comments preserved) and triggers an immediate fetch for that org. The popover footer shows a short note such as `1 project off` that opens Settings. ADR [0010](adr/0010-per-org-enabled-toggle.md).
+
+**Acceptance.**
+
+- `enabled = false` round-trips through config load/save without stripping comments.
+- Poll and multi-org fetch skip disabled orgs; dashboard tray counts exclude their rows.
+- Re-enable runs a poll without waiting for the interval.
+
+**Bryan tests.**
+
+```bash
+cd ~/Development/springfield-tools/agent-dashboard
+yarn tauri:dev
+```
+
+In Settings, turn **springfield-usa** off. Confirm its section disappears from the popover, tray counts drop any usa-only items, and the footer shows `1 project off`. No auth banner should appear for usa while it is off. Turn usa back on and confirm a fresh fetch repopulates the section. Optionally set `enabled = false` under the usa `[[orgs]]` block in config.toml and relaunch to confirm the same behavior.
+
 ### Phase 6 — Release
 
 **Scope:** semantic-release config and the Cargo version script, the `release` job, and a macOS-only `tauri-action` publish of an unsigned artifact. README install note matches ham-radio-ui's unsigned-build wording. Dependabot config for npm, actions, and cargo.

@@ -71,10 +71,12 @@ export type DashboardSnapshot = {
   graphqlPollCost?: number | null;
   graphqlRemaining?: number | null;
   graphqlBudgets?: GraphqlBudgetLine[];
+  disabledOrgCount?: number;
 };
 
 export type OrgConfigEntry = {
   name: string;
+  enabled: boolean;
   credential?: string | null;
   include: string[];
   exclude: string[];
@@ -82,6 +84,7 @@ export type OrgConfigEntry = {
 
 export type OrgAuthStatus = {
   name: string;
+  enabled: boolean;
   credentialSource: string;
   ready: boolean;
 };
