@@ -1046,6 +1046,6 @@ mod tests {
                 .iter()
                 .all(|s| s.org != "springfield-usa")
         );
-        assert_eq!(snapshot.tray_title, "1");
+        assert_eq!(snapshot.tray_title, "1·0·0·0");
     }
 }
