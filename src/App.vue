@@ -373,6 +373,14 @@
           · {{ snapshot.bots.failing }} failing
         </template>
       </button>
+      <button
+        v-if="disabledProjectsFooter"
+        type="button"
+        class="btn-text footer-projects-off"
+        @click="settingsOpen = true"
+      >
+        {{ disabledProjectsFooter }}
+      </button>
       <span v-if="graphqlBudgetLabel" class="footer-budget">{{ graphqlBudgetLabel }}</span>
       <span v-if="configStatus" class="footer-path">{{ configStatus.configPath }}</span>
     </footer>
@@ -408,14 +416,28 @@
           v-for="entry in configStatus?.orgAuth ?? []"
           :key="entry.name"
           class="org-token-block"
+          :class="{ 'org-token-block-disabled': !entry.enabled }"
         >
             <h3 class="settings-subtitle">
               {{ entry.name }}
-              <span class="org-auth-pill" :class="{ ready: entry.ready }">
+              <label class="org-enabled-toggle">
+                <input
+                  type="checkbox"
+                  :checked="entry.enabled"
+                  @change="onOrgEnabledChange(entry.name, $event)"
+                />
+                <span>{{ entry.enabled ? 'On' : 'Off' }}</span>
+              </label>
+              <span
+                v-if="entry.enabled"
+                class="org-auth-pill"
+                :class="{ ready: entry.ready }"
+              >
                 {{ entry.credentialSource }} · {{ entry.ready ? 'ready' : 'needs token' }}
               </span>
+              <span v-else class="org-auth-pill">polling off</span>
             </h3>
-            <template v-if="entry.credentialSource === 'keychain'">
+            <template v-if="entry.enabled && entry.credentialSource === 'keychain'">
               <div class="org-token-row">
                 <label class="settings-label org-token-field">
                   Token
@@ -442,8 +464,11 @@
                 </div>
               </div>
             </template>
-          <p v-else class="settings-hint">
+          <p v-else-if="entry.enabled" class="settings-hint">
             Uses <code>gh auth token</code> for this org (shared CLI session).
+          </p>
+          <p v-else class="settings-hint">
+            This project is hidden from the popover and not polled until you turn it back on.
           </p>
         </div>
         </div>
@@ -872,6 +897,16 @@ const fetchedLabel = computed(() => {
   return formatRelativeTime(snapshot.value.fetchedAt);
 });
 
+const disabledProjectsFooter = computed(() => {
+  const n =
+    snapshot.value?.disabledOrgCount ??
+    (configStatus.value?.orgs ?? []).filter((o) => !o.enabled).length;
+  if (!n) {
+    return '';
+  }
+  return n === 1 ? '1 project off' : `${n} projects off`;
+});
+
 const graphqlBudgetLabel = computed(() => {
   const budgets = snapshot.value?.graphqlBudgets;
   if (budgets && budgets.length > 0) {
@@ -928,6 +963,23 @@ async function onPause(mode: string): Promise<void> {
 async function onResume(): Promise<void> {
   await invoke('resume_polling');
   await reload();
+}
+
+async function onOrgEnabledChange(org: string, event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const enabled = input.checked;
+  tokenMessage.value = '';
+  try {
+    await invoke('set_org_enabled', { org, enabled });
+    tokenMessage.value = enabled
+      ? `${org} turned on — fetching now.`
+      : `${org} turned off.`;
+    await reload();
+  } catch (e) {
+    tokenMessage.value = String(e);
+    input.checked = !enabled;
+    await reload();
+  }
 }
 
 async function saveToken(org: string): Promise<void> {

@@ -53,10 +53,11 @@ pub fn org_credential_source_label(org: &OrgConfig, config: &AppConfig) -> &'sta
 }
 
 pub fn credential_is_ready(config: &AppConfig) -> bool {
-    config
-        .orgs
-        .iter()
-        .all(|org| org_credential_is_ready(org, config))
+    let enabled = config.orgs.iter().filter(|org| org.enabled);
+    if enabled.clone().count() == 0 {
+        return true;
+    }
+    enabled.all(|org| org_credential_is_ready(org, config))
 }
 
 pub fn org_credential_is_ready(org: &OrgConfig, config: &AppConfig) -> bool {
@@ -215,6 +216,7 @@ mod tests {
         config.github.credential = "keychain".to_string();
         let org = OrgConfig {
             name: "springfield-tools".to_string(),
+            enabled: true,
             credential: Some("gh".to_string()),
             include: vec![],
             exclude: vec![],

@@ -114,6 +114,9 @@ impl Default for LabelsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OrgConfig {
     pub name: String,
+    /// When false, the org is not polled and is hidden from the popover (Settings still lists it).
+    #[serde(default = "default_true")]
+    pub enabled: bool,
     /// Overrides `[github].credential` for this org (`keychain` or `gh`).
     #[serde(default)]
     pub credential: Option<String>,
@@ -124,6 +127,10 @@ pub struct OrgConfig {
 }
 
 impl OrgConfig {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
     pub fn credential_mode(&self, default: &str) -> String {
         self.credential
             .as_deref()
@@ -217,18 +224,21 @@ fn default_orgs() -> Vec<OrgConfig> {
     vec![
         OrgConfig {
             name: "springfield-ham-radio".to_string(),
+            enabled: true,
             credential: None,
             include: vec![],
             exclude: vec![],
         },
         OrgConfig {
             name: "springfield-tools".to_string(),
+            enabled: true,
             credential: None,
             include: vec![],
             exclude: vec![],
         },
         OrgConfig {
             name: "springfield-usa".to_string(),
+            enabled: true,
             credential: None,
             include: vec![],
             exclude: vec![],
@@ -284,6 +294,19 @@ pub fn parse_config_toml(text: &str) -> Result<AppConfig, ConfigError> {
     let config: AppConfig = toml::from_str(text).map_err(|e| ConfigError::Parse(e.to_string()))?;
     validate_poll_interval(config.poll_interval_seconds)?;
     Ok(config)
+}
+
+pub fn disabled_org_count(config: &AppConfig) -> usize {
+    config.orgs.iter().filter(|o| !o.enabled).count()
+}
+
+pub fn org_name_is_enabled(config: &AppConfig, name: &str) -> bool {
+    config
+        .orgs
+        .iter()
+        .find(|o| o.name == name)
+        .map(|o| o.enabled)
+        .unwrap_or(false)
 }
 
 /// True when the file is missing or has no non-whitespace content (including 0-byte files).
@@ -398,6 +421,24 @@ fn patch_config_document(existing: &str, config: &AppConfig) -> Result<String, S
         }
     }
 
+    if let Some(orgs) = doc.get_mut("orgs").and_then(|v| v.as_array_mut()) {
+        for org_table in orgs.iter_mut() {
+            let name = org_table
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            if let Some(name) = name {
+                let enabled = config
+                    .orgs
+                    .iter()
+                    .find(|o| o.name == name)
+                    .map(|o| o.enabled)
+                    .unwrap_or(true);
+                org_table["enabled"] = value(enabled);
+            }
+        }
+    }
+
     Ok(doc.to_string())
 }
 
@@ -504,6 +545,74 @@ mod tests {
         assert!(err.is_none());
         assert_eq!(loaded.poll_pause.as_deref(), Some("manual"));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn org_enabled_defaults_true_when_omitted() {
+        let text = r#"
+poll_interval_seconds = 60
+[[orgs]]
+name = "springfield-tools"
+include = []
+exclude = []
+"#;
+        let config = parse_config_toml(text).expect("parse");
+        assert!(config.orgs[0].enabled);
+    }
+
+    #[test]
+    fn org_enabled_parses_false() {
+        let text = r#"
+poll_interval_seconds = 60
+[[orgs]]
+name = "springfield-usa"
+enabled = false
+include = []
+exclude = []
+"#;
+        let config = parse_config_toml(text).expect("parse");
+        assert!(!config.orgs[0].enabled);
+        assert_eq!(config.orgs[0].name, "springfield-usa");
+    }
+
+    #[test]
+    fn save_org_enabled_preserves_comments() {
+        let dir = std::env::temp_dir().join("agent-dashboard-config-enabled-test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("tmpdir");
+        let path = dir.join("config.toml");
+        let original = r#"# projects
+poll_interval_seconds = 60
+
+[[orgs]]
+name = "springfield-usa"
+include = []
+exclude = []
+"#;
+        fs::write(&path, original).expect("write");
+
+        let mut config = parse_config_toml(original).expect("parse");
+        config.orgs[0].enabled = false;
+        save_config(&path, &config).expect("save");
+
+        let written = fs::read_to_string(&path).expect("read");
+        assert!(written.contains("# projects"));
+        assert!(written.contains("enabled = false"));
+
+        let (loaded, err) = load_config(&path);
+        assert!(err.is_none());
+        assert!(!loaded.orgs[0].enabled);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn disabled_org_count_helper() {
+        let mut config = AppConfig::default();
+        config.orgs[2].enabled = false;
+        assert_eq!(disabled_org_count(&config), 1);
+        assert!(!org_name_is_enabled(&config, "springfield-usa"));
+        assert!(org_name_is_enabled(&config, "springfield-tools"));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -160,6 +160,13 @@ pub struct DashboardSnapshot {
     pub graphql_remaining: Option<i32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub graphql_budgets: Vec<GraphqlBudgetLine>,
+    /// Orgs with `enabled = false` in config (shown in Settings; omitted from popover).
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub disabled_org_count: u32,
+}
+
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
 }
 
 fn group_title(id: &str) -> &'static str {
@@ -456,6 +463,31 @@ pub fn build_dashboard(
     org_auth_banners: HashMap<String, String>,
     org_section_notices: HashMap<String, OrgSectionNotice>,
 ) -> DashboardSnapshot {
+    let disabled_org_count = crate::config::disabled_org_count(config) as u32;
+    let enabled_org_names: HashSet<String> = config
+        .orgs
+        .iter()
+        .filter(|o| o.enabled)
+        .map(|o| o.name.clone())
+        .collect();
+    let items: Vec<RawItem> = items
+        .into_iter()
+        .filter(|i| enabled_org_names.contains(&i.org))
+        .collect();
+    let graphql_budgets: Vec<GraphqlBudgetLine> = graphql_budgets
+        .into_iter()
+        .filter(|b| {
+            if b.credential_key == "gh" {
+                config
+                    .orgs
+                    .iter()
+                    .any(|o| o.enabled && crate::credential::org_uses_gh(o, config))
+            } else {
+                enabled_org_names.contains(&b.credential_key)
+            }
+        })
+        .collect();
+
     let labels = &config.labels;
     let bot_mode = config.filters.bots;
     let surface_failing = config.filters.surface_failing_bots;
@@ -474,7 +506,7 @@ pub fn build_dashboard(
     let groups = groups_from_buckets(&buckets);
 
     let mut org_sections = Vec::new();
-    for org_cfg in &config.orgs {
+    for org_cfg in config.orgs.iter().filter(|o| o.enabled) {
         let org_items: Vec<RawItem> = items
             .iter()
             .filter(|i| i.org == org_cfg.name)
@@ -539,6 +571,7 @@ pub fn build_dashboard(
         graphql_poll_cost,
         graphql_remaining,
         graphql_budgets,
+        disabled_org_count,
     }
 }
 
@@ -962,5 +995,56 @@ mod tests {
         assert!(snapshot.bots.is_none());
         assert_eq!(snapshot.groups[0].id, "not-started");
         assert_eq!(snapshot.groups[0].items.len(), 1);
+    }
+
+    #[test]
+    fn disabled_org_excluded_from_sections_and_tray() {
+        let mut config = AppConfig::default();
+        config.orgs[2].enabled = false;
+        let labels = config.labels.clone();
+        let item_enabled = RawItem {
+            kind: ItemKind::Pr,
+            org: "springfield-tools".to_string(),
+            repo: "agent-dashboard".to_string(),
+            number: 1,
+            title: "tools pr".to_string(),
+            url: "https://example.com/1".to_string(),
+            author: "human".to_string(),
+            updated_at: "2026-10-10T12:00:00Z".to_string(),
+            is_draft: false,
+            labels: vec![labels.needs_input.clone()],
+            ci: None,
+            ci_unknown: false,
+        };
+        let item_disabled = RawItem {
+            kind: ItemKind::Pr,
+            org: "springfield-usa".to_string(),
+            repo: "usa".to_string(),
+            number: 2,
+            title: "usa pr".to_string(),
+            url: "https://example.com/2".to_string(),
+            author: "human".to_string(),
+            updated_at: "2026-10-10T12:00:00Z".to_string(),
+            is_draft: false,
+            labels: vec![labels.needs_input.clone()],
+            ci: None,
+            ci_unknown: false,
+        };
+        let snapshot = build_dashboard_simple(
+            vec![item_enabled, item_disabled],
+            &config,
+            "now",
+            None,
+            None,
+        );
+        assert_eq!(snapshot.disabled_org_count, 1);
+        assert_eq!(snapshot.org_sections.len(), 2);
+        assert!(
+            snapshot
+                .org_sections
+                .iter()
+                .all(|s| s.org != "springfield-usa")
+        );
+        assert_eq!(snapshot.tray_title, "1");
     }
 }
