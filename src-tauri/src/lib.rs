@@ -312,23 +312,32 @@ async fn set_org_enabled(
     entry.enabled = enabled;
     save_config_in_memory(state.inner(), &config)?;
     if enabled {
-        let app = app.clone();
-        let state = state.inner().clone();
-        tauri::async_runtime::spawn(async move {
-            let client = reqwest::Client::new();
-            let _ = run_poll_cycle(&app, &state, &client, true, true).await;
-        });
+        let runtime = &state.poll_runtime;
+        if runtime
+            .in_flight
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            runtime.pending_wake.store(true, std::sync::atomic::Ordering::SeqCst);
+            runtime.wake.notify_one();
+        } else {
+            let app = app.clone();
+            let state = state.inner().clone();
+            tauri::async_runtime::spawn(async move {
+                let client = reqwest::Client::new();
+                let _ = run_poll_cycle(&app, &state, &client, true, true).await;
+            });
+        }
     } else {
         rebuild_dashboard_after_org_disabled(state.inner())?;
+        let snap = state
+            .dashboard
+            .lock()
+            .map(|d| d.clone())
+            .unwrap_or_default();
+        crate::poll::persist_snapshot_file(state.inner(), &snap);
+        state.set_auth_error(None);
         #[cfg(target_os = "macos")]
-        {
-            let snap = state
-                .dashboard
-                .lock()
-                .map(|d| d.clone())
-                .unwrap_or_default();
-            crate::tray::sync_tray_from_snapshot(&app, &snap);
-        }
+        crate::tray::sync_tray_from_snapshot(&app, &snap);
         let _ = app.emit("dashboard-updated", ());
     }
     Ok(())

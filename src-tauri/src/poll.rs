@@ -24,7 +24,7 @@ use crate::tray;
 
 pub struct PollRuntime {
     pub wake: Notify,
-    in_flight: AtomicBool,
+    pub(crate) in_flight: AtomicBool,
     failure_backoff_secs: Mutex<u64>,
     rate_limit_until: Mutex<Option<DateTime<Utc>>>,
     gh_token_cache: Mutex<Option<String>>,
@@ -381,7 +381,11 @@ pub async fn run_poll_cycle<R: Runtime>(
         if enabled_org_count == 0 {
             state.set_auth_error(None);
             state.set_banner(None);
-            rebuild_dashboard_after_org_disabled(state)?;
+            state.set_offline(false);
+            let snapshot = filter_dashboard_for_config(state)?;
+            persist_snapshot_file(state, &snapshot);
+            #[cfg(target_os = "macos")]
+            tray::sync_tray_from_snapshot(app, &snapshot);
             let _ = app.emit("dashboard-updated", ());
             return Ok(());
         }
@@ -555,8 +559,18 @@ pub async fn run_poll_cycle<R: Runtime>(
             .lock()
             .map(|d| d.clone())
             .unwrap_or_else(|_| crate::model::build_dashboard_simple(vec![], &config, "", None, None));
+        let config = state
+            .config
+            .lock()
+            .map(|c| c.clone())
+            .map_err(|_| "config lock poisoned".to_string())?;
+
         let mut merged_items = fetch.items;
+        merged_items.retain(|i| org_name_is_enabled(&config, &i.org));
         for org_name in fetch.org_errors.keys() {
+            if !org_name_is_enabled(&config, org_name) {
+                continue;
+            }
             for item in snapshot_rows_to_raw(&previous) {
                 if item.org != *org_name {
                     continue;
@@ -677,8 +691,19 @@ pub fn save_config_in_memory(state: &AppState, config: &AppConfig) -> Result<(),
     Ok(())
 }
 
+pub fn persist_snapshot_file(state: &AppState, snapshot: &crate::model::DashboardSnapshot) {
+    if let Some(parent) = state.config_path.parent() {
+        let path = parent.join("snapshot.json");
+        if let Err(e) = write_snapshot_file(&path, snapshot) {
+            log::warn!("snapshot: {e}");
+        }
+    }
+}
+
 /// Rebuild the dashboard from the last snapshot, dropping disabled org rows (no GitHub calls).
-pub fn rebuild_dashboard_after_org_disabled(state: &AppState) -> Result<(), String> {
+pub fn filter_dashboard_for_config(
+    state: &AppState,
+) -> Result<crate::model::DashboardSnapshot, String> {
     let config = state
         .config
         .lock()
@@ -689,19 +714,36 @@ pub fn rebuild_dashboard_after_org_disabled(state: &AppState) -> Result<(), Stri
         .lock()
         .map(|d| d.clone())
         .map_err(|_| "dashboard lock poisoned".to_string())?;
-    let items = snapshot_rows_to_raw(&previous)
+    filter_dashboard_snapshot(&config, &previous)
+}
+
+pub fn filter_dashboard_snapshot(
+    config: &AppConfig,
+    previous: &crate::model::DashboardSnapshot,
+) -> Result<crate::model::DashboardSnapshot, String> {
+    let items = snapshot_rows_to_raw(previous)
         .into_iter()
-        .filter(|i| org_name_is_enabled(&config, &i.org))
+        .filter(|i| org_name_is_enabled(config, &i.org))
         .collect();
     let budgets = previous
         .graphql_budgets
         .iter()
-        .filter(|b| org_name_is_enabled(&config, &b.credential_key) || b.credential_key == "gh")
+        .filter(|b| {
+            if b.credential_key == "gh" {
+                config
+                    .orgs
+                    .iter()
+                    .any(|o| o.enabled && org_uses_gh(o, config))
+            } else {
+                org_name_is_enabled(config, &b.credential_key)
+            }
+        })
         .cloned()
         .collect();
     let org_auth_banners: HashMap<String, String> = previous
         .org_sections
         .iter()
+        .filter(|s| org_name_is_enabled(config, &s.org))
         .filter_map(|s| {
             s.auth_banner
                 .as_ref()
@@ -711,6 +753,7 @@ pub fn rebuild_dashboard_after_org_disabled(state: &AppState) -> Result<(), Stri
     let org_section_notices: HashMap<String, crate::model::OrgSectionNotice> = previous
         .org_sections
         .iter()
+        .filter(|s| org_name_is_enabled(config, &s.org))
         .filter_map(|s| {
             s.section_notice
                 .as_ref()
@@ -719,7 +762,7 @@ pub fn rebuild_dashboard_after_org_disabled(state: &AppState) -> Result<(), Stri
         .collect();
     let mut snapshot = build_dashboard(
         items,
-        &config,
+        config,
         &previous.fetched_at,
         previous.graphql_poll_cost,
         previous.graphql_remaining,
@@ -728,6 +771,11 @@ pub fn rebuild_dashboard_after_org_disabled(state: &AppState) -> Result<(), Stri
         org_section_notices,
     );
     snapshot.stale = previous.stale;
-    state.set_dashboard(snapshot.clone());
+    Ok(snapshot)
+}
+
+pub fn rebuild_dashboard_after_org_disabled(state: &AppState) -> Result<(), String> {
+    let snapshot = filter_dashboard_for_config(state)?;
+    state.set_dashboard(snapshot);
     Ok(())
 }
