@@ -3,7 +3,7 @@ use std::sync::Arc;
 use reqwest::Client;
 use tauri::{AppHandle, Emitter};
 
-use crate::config::{org_name_is_enabled, AppConfig, OrgConfig};
+use crate::config::{org_name_is_enabled, OrgConfig};
 use crate::credential::obtain_github_token_for_org;
 use crate::github::rest_writes::{
     apply_label_diff, delete_issue_comment, post_issue_comment, RestWriteError,

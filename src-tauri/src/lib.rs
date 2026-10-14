@@ -333,7 +333,7 @@ async fn set_org_enabled(
             .dashboard
             .lock()
             .map(|d| d.clone())
-            .unwrap_or_default();
+            .map_err(|_| "dashboard lock poisoned".to_string())?;
         crate::poll::persist_snapshot_file(state.inner(), &snap);
         state.set_auth_error(None);
         #[cfg(target_os = "macos")]

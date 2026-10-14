@@ -53,12 +53,10 @@ pub fn org_credential_source_label(org: &OrgConfig, config: &AppConfig) -> &'sta
 }
 
 pub fn credential_is_ready(config: &AppConfig) -> bool {
-    let mut any_enabled = false;
     for org in &config.orgs {
         if !org.enabled {
             continue;
         }
-        any_enabled = true;
         if !org_credential_is_ready(org, config) {
             return false;
         }
