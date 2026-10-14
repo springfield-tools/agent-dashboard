@@ -783,7 +783,7 @@ mod tests {
             sample_item(vec!["needs-testing"], Some("SUCCESS")),
             RawItem {
                 kind: ItemKind::Pr,
-                org: "o".to_string(),
+                org: "springfield-ham-radio".to_string(),
                 repo: "r".to_string(),
                 number: 3,
                 title: "fail".to_string(),

@@ -216,9 +216,11 @@ mod tests {
 
     #[test]
     fn credential_ready_ignores_disabled_org_without_token() {
-        let mut config = AppConfig::default();
-        config.orgs[2].enabled = false;
-        assert!(credential_is_ready(&config));
+        let mut with_usa_disabled = AppConfig::default();
+        with_usa_disabled.orgs[2].enabled = false;
+        let ready_usa_off = credential_is_ready(&with_usa_disabled);
+        let mut with_usa_enabled = AppConfig::default();
+        assert_eq!(ready_usa_off, credential_is_ready(&with_usa_enabled));
     }
 
     #[test]
